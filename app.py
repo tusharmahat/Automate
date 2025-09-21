@@ -45,7 +45,6 @@ if generate:
         schedule_tables = {}
 
         # --- Distribute employees evenly to givers ---
-        emp_per_giver = math.ceil(len(employees) / len(givers))
         distributed = {g: [] for g in givers}
         for i, emp in enumerate(employees):
             giver = givers[i % len(givers)]
@@ -92,23 +91,25 @@ if generate:
             df = pd.DataFrame(schedule, columns=["Employee", "Break Giver", "Break Type", "Start", "End", "SA Initial"])
             schedule_tables[giver] = df
 
+            # Save to session_state for persistence
+            st.session_state[f"table_{giver}"] = df
+
         # --- Streamlit tables ---
         st.subheader("📅 Editable Schedule Per Break Giver")
-        for giver, df in schedule_tables.items():
-            # Initialize session_state if not exists
-            if f"table_{giver}" not in st.session_state:
-                st.session_state[f"table_{giver}"] = df
-        
+        for giver in givers:
+            df = st.session_state.get(f"table_{giver}", pd.DataFrame())
+            if df.empty:
+                continue
+
             st.markdown(f"**Breaker: {giver} | Date: {today_str} | Start: {giver_shift_times[giver][0]} | End: {giver_shift_times[giver][1]}**")
-            
-            # Use the session_state table
+
             edited_df = st.data_editor(
-                st.session_state[f"table_{giver}"].drop(columns="Break Giver"),
+                df.drop(columns="Break Giver"),
                 num_rows="dynamic",
                 use_container_width=True,
                 key=f"editor_{giver}"
             )
-            
+
             # Save edits back to session_state
             st.session_state[f"table_{giver}"] = edited_df
 
@@ -118,8 +119,12 @@ if generate:
         wb = Workbook()
         ws = wb.active
         ws.title = "Schedule"
-        
-        for giver, df in edited_tables.items():
+
+        for giver in givers:
+            df = st.session_state.get(f"table_{giver}", pd.DataFrame())
+            if df.empty:
+                continue
+
             # Table title
             ws.append([f"Breaker: {giver} | Date: {today_str} | Start: {giver_shift_times[giver][0]} | End: {giver_shift_times[giver][1]}"])
             title_row = ws.max_row
@@ -128,7 +133,7 @@ if generate:
             cell.font = Font(bold=True, color="FFFFFF")
             cell.fill = PatternFill("solid", fgColor="4F81BD")
             cell.alignment = Alignment(horizontal="center")
-        
+
             # Header
             ws.append(df.columns.tolist())
             header_row = ws.max_row
@@ -139,13 +144,13 @@ if generate:
                 c.alignment = Alignment(horizontal="center")
                 thin = Side(border_style="thin", color="000000")
                 c.border = Border(top=thin, left=thin, right=thin, bottom=thin)
-        
+
             # Data
             for r in dataframe_to_rows(df, index=False, header=False):
                 ws.append(r)
             ws.append([])
-        
-        # --- Adjust column widths based on max length ---
+
+        # --- Adjust column widths ---
         for ws in wb.worksheets:
             for col_cells in ws.columns:
                 max_length = 0
@@ -160,7 +165,7 @@ if generate:
                     if cell.value and not isinstance(cell, MergedCell):
                         max_length = max(max_length, len(str(cell.value)))
                 ws.column_dimensions[col_letter].width = max_length + 2
-        
+
         wb.save(buffer)
         st.download_button("Download Excel", buffer, "break_schedule.xlsx",
                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
