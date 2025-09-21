@@ -32,51 +32,64 @@ st.subheader("👨‍💼 Break Giver(s)")
 givers_input = st.text_input("Enter break giver names (comma-separated)", "Giver1, Giver2")
 givers = [g.strip() for g in givers_input.split(",") if g.strip()]
 
+st.subheader("⏰ Break Giver Timings")
+giver_times = {}
+for giver in givers:
+    col1, col2 = st.columns(2)
+    with col1:
+        start_str = st.text_input(f"{giver} Start Time (HH:MM)", "09:00", key=f"{giver}_start")
+    with col2:
+        end_str = st.text_input(f"{giver} End Time (HH:MM)", "17:00", key=f"{giver}_end")
+    try:
+        giver_times[giver] = {
+            "start": datetime.strptime(start_str, "%H:%M"),
+            "end": datetime.strptime(end_str, "%H:%M")
+        }
+    except:
+        st.error(f"Invalid time format for {giver}. Use HH:MM")
+
 st.subheader("👥 Employees")
 employees_input = st.text_area("Enter employee names (comma-separated)", "Alice, Bob, Carol, Dave")
 employees = [e.strip() for e in employees_input.split(",") if e.strip()]
-
-col1, col2 = st.columns(2)
-with col1:
-    shift_start_str = st.text_input("Shift Start (HH:MM)", "09:00")
-with col2:
-    shift_end_str = st.text_input("Shift End (HH:MM)", "17:00")
 
 generate = st.button("Generate Schedule")
 
 # --- Initialize / persist schedule in session_state ---
 if generate or "schedule" in st.session_state:
     try:
-        shift_start = datetime.strptime(shift_start_str, "%H:%M")
-        shift_end = datetime.strptime(shift_end_str, "%H:%M")
-
-        giver_count = len(givers)
-        giver_time = {g: shift_start + first_break_after for g in givers}
-
-        # Only generate new schedule if it doesn't exist
+        # Only generate new schedule if it doesn't exist or if user clicks generate
         if "schedule" not in st.session_state or generate:
             schedule = []
+            # Initialize giver times for scheduling
+            current_times = {g: giver_times[g]["start"] + first_break_after for g in givers}
 
-            # --- Step 1: Assign all 15-min breaks first ---
+            # Step 1: Assign 15-min breaks
             for idx, emp in enumerate(employees):
-                giver = givers[idx % giver_count]
-                start = giver_time[giver]
+                giver = givers[idx % len(givers)]
+                start = current_times[giver]
                 end = start + break15
+                if end > giver_times[giver]["end"]:
+                    end = giver_times[giver]["end"]
+                    start = end - break15
                 schedule.append([emp, giver, "15 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
-                giver_time[giver] = end + stagger_gap
+                current_times[giver] = end + stagger_gap
 
-            # --- Step 2: Assign all 30-min breaks ---
+            # Step 2: Assign 30-min breaks
             for idx, emp in enumerate(employees):
-                giver = givers[idx % giver_count]
-                start = giver_time[giver]
+                giver = givers[idx % len(givers)]
+                start = current_times[giver]
                 end = start + break30
-                if end > shift_end:
-                    end = shift_end
+                if end > giver_times[giver]["end"]:
+                    end = giver_times[giver]["end"]
                     start = end - break30
                 schedule.append([emp, giver, "30 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
-                giver_time[giver] = end + stagger_gap
+                current_times[giver] = end + stagger_gap
 
-            st.session_state.schedule = pd.DataFrame(schedule, columns=["Employee", "Break Giver", "Break Type", "Start", "End", "SA Initial"])
+            # Store in session_state
+            st.session_state.schedule = pd.DataFrame(
+                schedule,
+                columns=["Employee", "Break Giver", "Break Type", "Start", "End", "SA Initial"]
+            )
 
         # --- Editable tables per giver ---
         st.subheader("📅 Editable Schedule Per Break Giver")
@@ -84,7 +97,12 @@ if generate or "schedule" in st.session_state:
         for giver in givers:
             st.markdown(f"### 🧑‍🤝‍🧑 Schedule for {giver}")
             giver_df = st.session_state.schedule[st.session_state.schedule["Break Giver"] == giver].reset_index(drop=True)
-            edited_df = st.data_editor(giver_df, num_rows="dynamic", use_container_width=True, key=f"editor_{giver}")
+            edited_df = st.data_editor(
+                giver_df,
+                num_rows="dynamic",
+                use_container_width=True,
+                key=f"editor_{giver}"
+            )
             edited_tables[giver] = edited_df
 
         # Merge all giver tables back to session_state
