@@ -6,13 +6,6 @@ from io import BytesIO
 
 # --- Hide warnings ---
 warnings.filterwarnings("ignore")
-hide_console_warning = """
-<script>
-console.warn = () => {};
-console.error = () => {};
-</script>
-"""
-st.components.v1.html(hide_console_warning)
 
 # --- Page setup ---
 st.set_page_config(page_title="Break Scheduler", layout="wide")
@@ -26,9 +19,6 @@ first_break_after = timedelta(hours=2)
 stagger_gap = timedelta(minutes=0)
 
 # --- Inputs ---
-st.subheader("📅 Date")
-schedule_date = st.date_input("Select schedule date", datetime.today())
-
 st.subheader("👨‍💼 Break Giver(s)")
 givers_input = st.text_input("Enter break giver names (comma-separated)", "Giver1, Giver2")
 givers = [g.strip() for g in givers_input.split(",") if g.strip()]
@@ -36,15 +26,18 @@ givers = [g.strip() for g in givers_input.split(",") if g.strip()]
 st.subheader("⏰ Break Giver Timings")
 giver_times = {}
 for giver in givers:
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns([1,1,2])
     with col1:
         start_str = st.text_input(f"{giver} Start Time (HH:MM)", "09:00", key=f"{giver}_start")
     with col2:
         end_str = st.text_input(f"{giver} End Time (HH:MM)", "17:00", key=f"{giver}_end")
+    with col3:
+        date_str = st.date_input(f"{giver} Date", datetime.today(), key=f"{giver}_date")
     try:
         giver_times[giver] = {
             "start": datetime.strptime(start_str, "%H:%M"),
-            "end": datetime.strptime(end_str, "%H:%M")
+            "end": datetime.strptime(end_str, "%H:%M"),
+            "date": date_str
         }
     except:
         st.error(f"Invalid time format for {giver}. Use HH:MM")
@@ -55,14 +48,14 @@ employees = [e.strip() for e in employees_input.split(",") if e.strip()]
 
 generate = st.button("Generate Schedule")
 
-# --- Generate schedule ---
+# --- Initialize / persist schedule ---
 if generate or "schedule" in st.session_state:
     try:
         if "schedule" not in st.session_state or generate:
             schedule = []
             current_times = {g: giver_times[g]["start"] + first_break_after for g in givers}
 
-            # 15-min breaks
+            # Step 1: 15-min breaks
             for idx, emp in enumerate(employees):
                 giver = givers[idx % len(givers)]
                 start = current_times[giver]
@@ -71,19 +64,11 @@ if generate or "schedule" in st.session_state:
                     end = giver_times[giver]["end"]
                     start = end - break15
                 schedule.append([
-                    schedule_date.strftime("%Y-%m-%d"),  # Date
-                    emp,                                 # Employee
-                    giver,                               # Break Giver
-                    giver_times[giver]["start"].strftime("%H:%M"),  # Giver Start
-                    giver_times[giver]["end"].strftime("%H:%M"),    # Giver End
-                    "15 min",                            # Break Type
-                    start.strftime("%H:%M"),             # Break Start
-                    end.strftime("%H:%M"),               # Break End
-                    ""                                   # SA Initial
+                    emp, giver, "15 min", start.strftime("%H:%M"), end.strftime("%H:%M"), "", giver_times[giver]["date"]
                 ])
                 current_times[giver] = end + stagger_gap
 
-            # 30-min breaks
+            # Step 2: 30-min breaks
             for idx, emp in enumerate(employees):
                 giver = givers[idx % len(givers)]
                 start = current_times[giver]
@@ -92,40 +77,33 @@ if generate or "schedule" in st.session_state:
                     end = giver_times[giver]["end"]
                     start = end - break30
                 schedule.append([
-                    schedule_date.strftime("%Y-%m-%d"),
-                    emp,
-                    giver,
-                    giver_times[giver]["start"].strftime("%H:%M"),
-                    giver_times[giver]["end"].strftime("%H:%M"),
-                    "30 min",
-                    start.strftime("%H:%M"),
-                    end.strftime("%H:%M"),
-                    ""
+                    emp, giver, "30 min", start.strftime("%H:%M"), end.strftime("%H:%M"), "", giver_times[giver]["date"]
                 ])
                 current_times[giver] = end + stagger_gap
 
             st.session_state.schedule = pd.DataFrame(
                 schedule,
-                columns=[
-                    "Date", "Employee", "Break Giver", "Giver Start", "Giver End",
-                    "Break Type", "Break Start", "Break End", "SA Initial"
-                ]
+                columns=["Employee", "Break Giver", "Break Type", "Start", "End", "SA Initial", "Date"]
             )
 
         # --- Editable tables per giver ---
         st.subheader("📅 Editable Schedule Per Break Giver")
         edited_tables = {}
         for giver in givers:
-            st.markdown(f"### 🧑‍🤝‍🧑 Schedule for {giver}")
             giver_df = st.session_state.schedule[st.session_state.schedule["Break Giver"] == giver].reset_index(drop=True)
+            # Table title includes giver name, start/end time, and date
+            title = f"🧑‍🤝‍🧑 {giver} | {giver_times[giver]['start'].strftime('%H:%M')} - {giver_times[giver]['end'].strftime('%H:%M')} | {giver_times[giver]['date'].strftime('%Y-%m-%d')}"
+            st.markdown(f"### {title}")
             edited_df = st.data_editor(
-                giver_df,
+                giver_df.drop(columns=["Date"]),  # Date shown in title
                 num_rows="dynamic",
                 use_container_width=True,
                 key=f"editor_{giver}"
             )
+            edited_df["Date"] = giver_df["Date"]  # Keep date in dataframe for downloads
             edited_tables[giver] = edited_df
 
+        # Merge all giver tables
         st.session_state.schedule = pd.concat(edited_tables.values(), ignore_index=True)
 
         # --- Checker ---
