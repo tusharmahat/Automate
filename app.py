@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from io import BytesIO
 
 st.set_page_config(page_title="Break Scheduler", layout="wide")
-st.title("☕ Break Scheduler with Break Givers")
+st.title("☕ Break Scheduler (by Break Giver)")
 
 # --- Sidebar settings ---
 st.sidebar.header("⚙️ Break Settings")
@@ -43,7 +43,7 @@ if generate and employees and givers:
         giver_count = len(givers)
 
         for i, emp in enumerate(employees):
-            giver = givers[i % giver_count]  # distribute evenly
+            giver = givers[i % giver_count]  # evenly distribute
 
             # 30-min break (always first)
             start30 = shift_start + first_break_after + (i * stagger_gap)
@@ -60,22 +60,32 @@ if generate and employees and givers:
 
         df = pd.DataFrame(schedule, columns=["Employee", "Break Giver", "Break Type", "Start", "End", "SA Initial"])
 
-        st.subheader("📅 Editable Break Schedule")
-        edited_df = st.data_editor(df, num_rows="dynamic", use_container_width=True)
+        st.subheader("📅 Editable Break Schedule (Per Giver)")
 
-        # --- Download buttons ---
+        # --- Show separate editable tables for each giver ---
+        edited_tables = {}
+        for giver in givers:
+            st.markdown(f"### 🧑‍🤝‍🧑 Schedule for **{giver}**")
+            giver_df = df[df["Break Giver"] == giver].reset_index(drop=True)
+            edited_df = st.data_editor(giver_df, num_rows="dynamic", use_container_width=True)
+            edited_tables[giver] = edited_df
+
+        # --- Combine back for downloads ---
+        final_df = pd.concat(edited_tables.values(), ignore_index=True)
+
         st.subheader("⬇️ Download Schedule")
 
         # CSV
-        csv = edited_df.to_csv(index=False).encode("utf-8")
-        st.download_button("Download as CSV", csv, "break_schedule.csv", "text/csv")
+        csv = final_df.to_csv(index=False).encode("utf-8")
+        st.download_button("Download All (CSV)", csv, "break_schedule.csv", "text/csv")
 
         # Excel
         buffer = BytesIO()
         with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-            edited_df.to_excel(writer, index=False, sheet_name="Schedule")
+            for giver, giver_df in edited_tables.items():
+                giver_df.to_excel(writer, index=False, sheet_name=giver[:31])  # Excel sheet name max 31 chars
         st.download_button(
-            "Download as Excel",
+            "Download All (Excel, per giver)",
             data=buffer,
             file_name="break_schedule.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
