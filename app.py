@@ -1,64 +1,75 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
+from io import BytesIO
 
 st.set_page_config(page_title="Break Scheduler", layout="wide")
-st.title("☕ Employee Break Scheduler")
+st.title("☕ Editable Employee Break Scheduler")
 
-# --- Parameters (editable in sidebar) ---
-st.sidebar.header("⚙️ Settings")
+# --- Sidebar settings ---
+st.sidebar.header("⚙️ Break Settings")
 break15 = timedelta(minutes=15)
 break30 = timedelta(minutes=30)
-min_gap = timedelta(hours=2)  # minimum time gap between 30 and 15
-stagger_gap = timedelta(minutes=15)  # stagger each employee
-first_break_after = timedelta(hours=2)  # no break before this
+min_gap = timedelta(hours=2)          # min gap between 30 + 15
+stagger_gap = timedelta(minutes=15)   # stagger each employee
+first_break_after = timedelta(hours=2)
 
-# --- Upload input file ---
-st.subheader("📤 Upload Employee Shift File")
-st.markdown("File must have columns: **Employee | Shift Start | Shift End** (time as HH:MM)")
+# --- Inputs ---
+st.subheader("👥 Enter Employees")
+employees_input = st.text_area(
+    "Type employee names separated by commas:",
+    "Alice, Bob, Carol, Dave"
+)
+employees = [e.strip() for e in employees_input.split(",") if e.strip()]
 
-uploaded_file = st.file_uploader("Upload Excel or CSV", type=["xlsx", "csv"])
+col1, col2 = st.columns(2)
+with col1:
+    shift_start_str = st.text_input("Shift Start (HH:MM)", "09:00")
+with col2:
+    shift_end_str = st.text_input("Shift End (HH:MM)", "17:00")
 
-if uploaded_file:
-    # Read file
-    if uploaded_file.name.endswith(".csv"):
-        employees_df = pd.read_csv(uploaded_file)
-    else:
-        employees_df = pd.read_excel(uploaded_file)
+generate = st.button("Generate Break Schedule")
 
-    st.write("👥 Employee Shifts")
-    st.dataframe(employees_df)
+if generate and employees:
+    try:
+        shift_start = datetime.strptime(shift_start_str, "%H:%M")
+        shift_end = datetime.strptime(shift_end_str, "%H:%M")
 
-    schedule = []
+        schedule = []
+        for i, emp in enumerate(employees):
+            # 30-min break
+            start30 = shift_start + first_break_after + (i * stagger_gap)
+            end30 = start30 + break30
 
-    for i, row in employees_df.iterrows():
-        emp = row["Employee"]
-        shift_start = datetime.strptime(str(row["Shift Start"]), "%H:%M")
-        shift_end = datetime.strptime(str(row["Shift End"]), "%H:%M")
+            # 15-min break
+            start15 = start30 + min_gap
+            if start15 + break15 > shift_end:
+                start15 = shift_end - break15
+            end15 = start15 + break15
 
-        # --- 30 min break ---
-        start30 = shift_start + first_break_after + (i * stagger_gap)
-        end30 = start30 + break30
+            schedule.append([emp, "30 min", start30.strftime("%H:%M"), end30.strftime("%H:%M")])
+            schedule.append([emp, "15 min", start15.strftime("%H:%M"), end15.strftime("%H:%M")])
 
-        # --- 15 min break ---
-        start15 = start30 + min_gap
-        if start15 + break15 > shift_end:  # if not enough time left
-            start15 = shift_end - break15
-        end15 = start15 + break15
+        df = pd.DataFrame(schedule, columns=["Employee", "Break Type", "Start", "End"])
 
-        schedule.append([emp, "30 min", start30.strftime("%H:%M"), end30.strftime("%H:%M")])
-        schedule.append([emp, "15 min", start15.strftime("%H:%M"), end15.strftime("%H:%M")])
+        st.subheader("📅 Editable Break Schedule")
+        edited_df = st.data_editor(df, num_rows="dynamic", use_container_width=True)
 
-    df = pd.DataFrame(schedule, columns=["Employee", "Break Type", "Start", "End"])
+        # --- Download buttons ---
+        st.subheader("⬇️ Download Schedule")
 
-    st.subheader("📅 Generated Break Schedule")
-    st.dataframe(df, use_container_width=True)
+        csv = edited_df.to_csv(index=False).encode("utf-8")
+        st.download_button("Download as CSV", csv, "break_schedule.csv", "text/csv")
 
-    # --- Download buttons ---
-    csv = df.to_csv(index=False).encode("utf-8")
-    st.download_button("⬇️ Download as CSV", csv, "break_schedule.csv", "text/csv")
+        buffer = BytesIO()
+        with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+            edited_df.to_excel(writer, index=False, sheet_name="Schedule")
+        st.download_button(
+            "Download as Excel",
+            data=buffer,
+            file_name="break_schedule.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
 
-    xlsx_file = "break_schedule.xlsx"
-    df.to_excel(xlsx_file, index=False)
-    with open(xlsx_file, "rb") as f:
-        st.download_button("⬇️ Download as Excel", f, "break_schedule.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    except Exception as e:
+        st.error(f"⚠️ Error: {e}")
