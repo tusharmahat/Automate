@@ -3,7 +3,7 @@ import warnings
 import pandas as pd
 from datetime import datetime, timedelta
 from io import BytesIO
-from openpyxl.styles import Font, PatternFill, Alignment
+from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 # --- Hide Python warnings ---
@@ -44,7 +44,7 @@ with col1:
 with col2:
     shift_end_str = st.text_input("Shift End (HH:MM)", "17:00")
 with col3:
-    shift_date_str = st.text_input("Shift Date (YYYY-MM-DD)", datetime.today().strftime("%Y-%m-%d"))
+    schedule_date_str = st.date_input("Date", datetime.today())
 
 generate = st.button("Generate Schedule")
 
@@ -53,7 +53,7 @@ if generate or "schedule" in st.session_state:
     try:
         shift_start = datetime.strptime(shift_start_str, "%H:%M")
         shift_end = datetime.strptime(shift_end_str, "%H:%M")
-        shift_date = datetime.strptime(shift_date_str, "%Y-%m-%d")
+        schedule_date = schedule_date_str.strftime("%Y-%m-%d")
 
         giver_count = len(givers)
         giver_time = {g: shift_start + first_break_after for g in givers}
@@ -81,7 +81,9 @@ if generate or "schedule" in st.session_state:
                 schedule.append([emp, giver, "30 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
                 giver_time[giver] = end + stagger_gap
 
-            st.session_state.schedule = pd.DataFrame(schedule, columns=["Employee", "Break Giver", "Break Type", "Start", "End", "SA Initial"])
+            st.session_state.schedule = pd.DataFrame(
+                schedule, columns=["Employee", "Break Giver", "Break Type", "Start", "End", "SA Initial"]
+            )
 
         # --- Editable tables per giver ---
         st.subheader("📅 Editable Schedule Per Break Giver")
@@ -107,62 +109,50 @@ if generate or "schedule" in st.session_state:
         else:
             st.success("✅ All employees have both 15-min and 30-min breaks assigned.")
 
-        # --- Download CSV ---
+        # --- Download ---
         st.subheader("⬇️ Download Schedule")
+
+        # CSV
         csv = st.session_state.schedule.to_csv(index=False).encode("utf-8")
         st.download_button("Download CSV", csv, "break_schedule.csv", "text/csv")
 
-        # --- Download Excel with styling ---
+        # Excel with beautified tables
         buffer = BytesIO()
         with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
             for giver, g_df in edited_tables.items():
-                sheet_name = giver[:31]
+                ws_name = giver[:31]
+                g_df_copy = g_df[["Employee", "Break Type", "Start", "End", "SA Initial"]].copy()
 
-                # Title row
-                title = f"Breaker: {giver} | Date: {shift_date.strftime('%Y-%m-%d')} | Start time: {giver_time[giver].strftime('%H:%M')}"
-                ws_title_df = pd.DataFrame([title.split("|")])
-                ws_title_df.to_excel(writer, index=False, header=False, startrow=0, sheet_name=sheet_name)
+                # Write title row above table
+                title = f"Breaker: {giver} | Date: {schedule_date} | Start time: {shift_start_str}"
+                ws = writer.book.create_sheet(title=ws_name)
+                ws.append([title])
+                ws.append(list(g_df_copy.columns))
 
-                # Actual table
-                g_df.to_excel(writer, index=False, startrow=2, sheet_name=sheet_name)
+                # Append table rows
+                for row in g_df_copy.itertuples(index=False):
+                    ws.append(list(row))
 
-                ws = writer.sheets[sheet_name]
+                # Beautify
+                for cell in ws[2]:
+                    cell.font = Font(bold=True, color="FFFFFF")
+                    cell.fill = PatternFill("solid", fgColor="4F81BD")  # header color
 
-                # Merge title row across all table columns
-                ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(g_df.columns))
-                title_cell = ws.cell(row=1, column=1)
-                title_cell.font = Font(bold=True, size=12)
-                title_cell.alignment = Alignment(horizontal="center", vertical="center")
-                title_cell.fill = PatternFill("solid", fgColor="BDD7EE")
-
-                # Header style
-                header_font = Font(bold=True, color="FFFFFF")
-                header_fill = PatternFill("solid", fgColor="4F81BD")
-                for col_num, col_name in enumerate(g_df.columns, 1):
-                    cell = ws.cell(row=3, column=col_num)
-                    cell.font = header_font
-                    cell.fill = header_fill
-                    cell.alignment = Alignment(horizontal="center", vertical="center")
-
-                # Auto-adjust column widths
-                for i, col in enumerate(g_df.columns, 1):
-                    max_length = max(
-                        g_df[col].astype(str).map(len).max(),
-                        len(col)
-                    ) + 2
-                    ws.column_dimensions[get_column_letter(i)].width = max_length
-
-                # Alternating row fill
+                # Alternating row colors
                 fill1 = PatternFill("solid", fgColor="DCE6F1")
                 fill2 = PatternFill("solid", fgColor="FFFFFF")
-                for row in range(4, 4 + len(g_df)):
-                    fill = fill1 if (row % 2 == 0) else fill2
-                    for col in range(1, len(g_df.columns) + 1):
-                        ws.cell(row=row, column=col).fill = fill
-                        ws.cell(row=row, column=col).alignment = Alignment(horizontal="center", vertical="center")
+                for idx, row in enumerate(ws.iter_rows(min_row=3, max_row=ws.max_row)):
+                    fill = fill1 if idx % 2 == 0 else fill2
+                    for cell in row:
+                        cell.fill = fill
+
+                # Adjust column widths
+                for col in ws.columns:
+                    max_length = max(len(str(cell.value)) if cell.value else 0 for cell in col)
+                    ws.column_dimensions[get_column_letter(col[0].column)].width = max_length + 2
 
         st.download_button(
-            "Download Excel (per giver, styled)", buffer, "break_schedule_styled.xlsx",
+            "Download Excel (per giver)", buffer, "break_schedule.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
