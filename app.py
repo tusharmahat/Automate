@@ -94,11 +94,23 @@ if generate:
 
         # --- Streamlit tables ---
         st.subheader("📅 Editable Schedule Per Break Giver")
-        edited_tables = {}
         for giver, df in schedule_tables.items():
+            # Initialize session_state if not exists
+            if f"table_{giver}" not in st.session_state:
+                st.session_state[f"table_{giver}"] = df
+        
             st.markdown(f"**Breaker: {giver} | Date: {today_str} | Start: {giver_shift_times[giver][0]} | End: {giver_shift_times[giver][1]}**")
-            edited_df = st.data_editor(df.drop(columns="Break Giver"), num_rows="dynamic", use_container_width=True, key=f"editor_{giver}")
-            edited_tables[giver] = edited_df
+            
+            # Use the session_state table
+            edited_df = st.data_editor(
+                st.session_state[f"table_{giver}"].drop(columns="Break Giver"),
+                num_rows="dynamic",
+                use_container_width=True,
+                key=f"editor_{giver}"
+            )
+            
+            # Save edits back to session_state
+            st.session_state[f"table_{giver}"] = edited_df
 
         # --- Excel export ---
         st.subheader("⬇️ Download Schedule")
