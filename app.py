@@ -134,14 +134,20 @@ if generate:
         
         # --- Adjust column widths based on max length ---
         for ws in wb.worksheets:
-            for col in ws.columns:
+            for col_cells in ws.columns:
                 max_length = 0
-                col_letter = col[0].column_letter
-                for cell in col:
-                    if cell.value:
+                # Get the column letter from the first non-merged cell
+                col_letter = None
+                for cell in col_cells:
+                    if not isinstance(cell, MergedCell):
+                        col_letter = cell.column_letter
+                        break
+                if not col_letter:
+                    continue
+                for cell in col_cells:
+                    if cell.value and not isinstance(cell, MergedCell):
                         max_length = max(max_length, len(str(cell.value)))
-                adjusted_width = (max_length + 2)
-                ws.column_dimensions[col_letter].width = adjusted_width
+                ws.column_dimensions[col_letter].width = max_length + 2
         
         wb.save(buffer)
         st.download_button("Download Excel", buffer, "break_schedule.xlsx",
