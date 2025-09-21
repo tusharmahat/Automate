@@ -121,4 +121,8 @@ if generate or "schedule" in st.session_state:
         with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
             for giver, g_df in edited_tables.items():
                 g_df.to_excel(writer, index=False, sheet_name=giver[:31])
-        st.download_button("Download Excel (per_
+        st.download_button("Download Excel (per giver)", buffer, "break_schedule.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+    except Exception as e:
+        st.error(f"⚠️ {e}")
