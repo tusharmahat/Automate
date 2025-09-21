@@ -27,19 +27,18 @@ st.subheader("👥 Employees")
 employees_input = st.text_area("Enter all employees (comma-separated)", "Alice, Bob, Carol, Dave")
 employees = [e.strip() for e in employees_input.split(",") if e.strip()]
 
-# --- Schedule Date ---
 st.subheader("📅 Select Schedule Date")
-schedule_date = st.date_input("Select Schedule Date")
+schedule_date = st.date_input("Select Schedule Date", datetime.today())
 
 # Shift input per giver
 giver_shift_times = {}
 for giver in givers:
     col1, col2 = st.columns(2)
     with col1:
-        start_str = st.time_input(f"{giver} Shift Start", datetime.strptime("09:00", "%H:%M").time())
+        start_time = st.time_input(f"{giver} Shift Start", datetime.strptime("09:00", "%H:%M").time())
     with col2:
-        end_str = st.time_input(f"{giver} Shift End", datetime.strptime("17:00", "%H:%M").time())
-    giver_shift_times[giver] = (start_str, end_str)
+        end_time = st.time_input(f"{giver} Shift End", datetime.strptime("17:00", "%H:%M").time())
+    giver_shift_times[giver] = (start_time, end_time)
 
 generate = st.button("Generate Schedule")
 
@@ -106,18 +105,15 @@ if generate:
 
             st.markdown(f"**Breaker: {giver} | Date: {schedule_date} | Start: {giver_shift_times[giver][0]} | End: {giver_shift_times[giver][1]}**")
 
-            # Only drop "Break Giver" if it exists
-            display_df = df.drop(columns="Break Giver") if "Break Giver" in df.columns else df
-
             edited_df = st.data_editor(
-                display_df,
+                df.drop(columns="Break Giver"),
                 num_rows="dynamic",
                 use_container_width=True,
                 key=f"editor_{giver}"
             )
 
-            # Update session_state in-place to preserve data and allow new rows
-            st.session_state[f"table_{giver}"].iloc[:, :] = edited_df
+            # --- Save edited DataFrame safely ---
+            st.session_state[f"table_{giver}"] = edited_df
 
         # --- Excel export ---
         st.subheader("⬇️ Download Schedule")
