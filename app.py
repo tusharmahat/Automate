@@ -5,6 +5,7 @@ from io import BytesIO
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils.dataframe import dataframe_to_rows
+from openpyxl.cell.cell import MergedCell
 import math
 
 # --- Page setup ---
@@ -136,7 +137,6 @@ if generate:
         for ws in wb.worksheets:
             for col_cells in ws.columns:
                 max_length = 0
-                # Get the column letter from the first non-merged cell
                 col_letter = None
                 for cell in col_cells:
                     if not isinstance(cell, MergedCell):
