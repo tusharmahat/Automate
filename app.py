@@ -3,7 +3,7 @@ import warnings
 import pandas as pd
 from datetime import datetime, timedelta
 from io import BytesIO
-from openpyxl.styles import Font, PatternFill
+from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
 
 # --- Hide Python warnings ---
@@ -44,33 +44,30 @@ with col1:
 with col2:
     shift_end_str = st.text_input("Shift End (HH:MM)", "17:00")
 with col3:
-    schedule_date_str = st.date_input("Date", datetime.today())
+    schedule_date = st.date_input("Date", datetime.today())
 
 generate = st.button("Generate Schedule")
 
-# --- Initialize / persist schedule in session_state ---
 if generate or "schedule" in st.session_state:
     try:
         shift_start = datetime.strptime(shift_start_str, "%H:%M")
         shift_end = datetime.strptime(shift_end_str, "%H:%M")
-        schedule_date = schedule_date_str.strftime("%Y-%m-%d")
+        schedule_date_str = schedule_date.strftime("%Y-%m-%d")
 
         giver_count = len(givers)
         giver_time = {g: shift_start + first_break_after for g in givers}
 
-        # Only generate new schedule if it doesn't exist
+        # --- Generate schedule only if not exists ---
         if "schedule" not in st.session_state or generate:
             schedule = []
-
-            # --- Step 1: Assign all 15-min breaks first ---
+            # 15-min breaks
             for idx, emp in enumerate(employees):
                 giver = givers[idx % giver_count]
                 start = giver_time[giver]
                 end = start + break15
                 schedule.append([emp, giver, "15 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
                 giver_time[giver] = end + stagger_gap
-
-            # --- Step 2: Assign all 30-min breaks ---
+            # 30-min breaks
             for idx, emp in enumerate(employees):
                 giver = givers[idx % giver_count]
                 start = giver_time[giver]
@@ -89,56 +86,53 @@ if generate or "schedule" in st.session_state:
         st.subheader("📅 Editable Schedule Per Break Giver")
         edited_tables = {}
         for giver in givers:
-            st.markdown(f"### 🧑‍🤝‍🧑 Schedule for {giver}")
+            st.markdown(f"### Breaker: {giver} | Date: {schedule_date_str} | Start time: {shift_start_str}")
             giver_df = st.session_state.schedule[st.session_state.schedule["Break Giver"] == giver].reset_index(drop=True)
             edited_df = st.data_editor(giver_df, num_rows="dynamic", use_container_width=True, key=f"editor_{giver}")
             edited_tables[giver] = edited_df
 
-        # Merge all giver tables back to session_state
+        # Merge back
         st.session_state.schedule = pd.concat(edited_tables.values(), ignore_index=True)
 
-        # --- Checker: verify each employee has both breaks ---
+        # --- Checker ---
         warning_employees = []
         for emp in employees:
             emp_breaks = st.session_state.schedule[st.session_state.schedule["Employee"] == emp]["Break Type"].tolist()
             if "15 min" not in emp_breaks or "30 min" not in emp_breaks:
                 warning_employees.append(emp)
-
         if warning_employees:
-            st.warning(f"⚠️ The following employees are missing breaks: {', '.join(warning_employees)}")
+            st.warning(f"⚠️ Missing breaks: {', '.join(warning_employees)}")
         else:
-            st.success("✅ All employees have both 15-min and 30-min breaks assigned.")
+            st.success("✅ All employees have both breaks assigned.")
 
         # --- Download ---
         st.subheader("⬇️ Download Schedule")
-
-        # CSV
         csv = st.session_state.schedule.to_csv(index=False).encode("utf-8")
         st.download_button("Download CSV", csv, "break_schedule.csv", "text/csv")
 
-        # Excel with beautified tables
+        # --- Excel with beautification ---
         buffer = BytesIO()
         with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
             for giver, g_df in edited_tables.items():
                 ws_name = giver[:31]
                 g_df_copy = g_df[["Employee", "Break Type", "Start", "End", "SA Initial"]].copy()
 
-                # Write title row above table
-                title = f"Breaker: {giver} | Date: {schedule_date} | Start time: {shift_start_str}"
                 ws = writer.book.create_sheet(title=ws_name)
+                # Title row
+                title = f"Breaker: {giver} | Date: {schedule_date_str} | Start time: {shift_start_str}"
                 ws.append([title])
+                ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(g_df_copy.columns))
+                ws["A1"].font = Font(bold=True, color="FFFFFF", size=12)
+                ws["A1"].fill = PatternFill("solid", fgColor="4F81BD")
+                ws["A1"].alignment = Alignment(horizontal="center")
+
+                # Header row
                 ws.append(list(g_df_copy.columns))
-
-                # Append table rows
-                for row in g_df_copy.itertuples(index=False):
-                    ws.append(list(row))
-
-                # Beautify
                 for cell in ws[2]:
                     cell.font = Font(bold=True, color="FFFFFF")
-                    cell.fill = PatternFill("solid", fgColor="4F81BD")  # header color
+                    cell.fill = PatternFill("solid", fgColor="4F81BD")
 
-                # Alternating row colors
+                # Table rows with alternating colors
                 fill1 = PatternFill("solid", fgColor="DCE6F1")
                 fill2 = PatternFill("solid", fgColor="FFFFFF")
                 for idx, row in enumerate(ws.iter_rows(min_row=3, max_row=ws.max_row)):
@@ -146,7 +140,7 @@ if generate or "schedule" in st.session_state:
                     for cell in row:
                         cell.fill = fill
 
-                # Adjust column widths
+                # Auto column width
                 for col in ws.columns:
                     max_length = max(len(str(cell.value)) if cell.value else 0 for cell in col)
                     ws.column_dimensions[get_column_letter(col[0].column)].width = max_length + 2
