@@ -1,14 +1,22 @@
 import streamlit as st
+import warnings
 import pandas as pd
 from datetime import datetime, timedelta
 from io import BytesIO
-import warnings
 
-# --- Suppress warnings ---
-warnings.filterwarnings("ignore")  # Hide Python warnings
-st.set_option('deprecation.showPyplotGlobalUse', False)
-st.set_option('global.deprecationWarning', False)
+# --- Hide Python warnings ---
+warnings.filterwarnings("ignore")
 
+# --- Hide browser console warnings ---
+hide_console_warning = """
+<script>
+console.warn = () => {};
+console.error = () => {};
+</script>
+"""
+st.components.v1.html(hide_console_warning)
+
+# --- Page setup ---
 st.set_page_config(page_title="Break Scheduler", layout="wide")
 st.title("☕ Break Scheduler with Checker")
 
