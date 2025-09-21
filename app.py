@@ -5,6 +5,7 @@ from io import BytesIO
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils.dataframe import dataframe_to_rows
+import math
 
 # --- Page setup ---
 st.set_page_config(page_title="Break Scheduler", layout="wide")
@@ -21,14 +22,13 @@ st.subheader("👨‍💼 Break Giver(s)")
 givers_input = st.text_input("Enter break giver names (comma-separated)", "Giver1, Giver2")
 givers = [g.strip() for g in givers_input.split(",") if g.strip()]
 
-st.subheader("👥 Employees per Break Giver")
-giver_employees = {}
+st.subheader("👥 Employees")
+employees_input = st.text_area("Enter all employees (comma-separated)", "Alice, Bob, Carol, Dave")
+employees = [e.strip() for e in employees_input.split(",") if e.strip()]
+
+# Shift input per giver
 giver_shift_times = {}
 for giver in givers:
-    emp_input = st.text_area(f"Enter employees for {giver} (comma-separated)", "")
-    emp_list = [e.strip() for e in emp_input.split(",") if e.strip()]
-    giver_employees[giver] = emp_list
-    
     col1, col2 = st.columns(2)
     with col1:
         start_str = st.text_input(f"{giver} Shift Start (HH:MM)", "09:00")
@@ -38,14 +38,21 @@ for giver in givers:
 
 generate = st.button("Generate Schedule")
 
-# --- Generate schedule ---
 if generate:
     try:
         today_str = datetime.today().strftime("%Y-%m-%d")
         schedule_tables = {}
 
+        # --- Distribute employees evenly to givers ---
+        emp_per_giver = math.ceil(len(employees) / len(givers))
+        distributed = {g: [] for g in givers}
+        for i, emp in enumerate(employees):
+            giver = givers[i % len(givers)]
+            distributed[giver].append(emp)
+
+        # --- Generate breaks for each giver ---
         for giver in givers:
-            emp_list = giver_employees[giver]
+            emp_list = distributed[giver]
             if not emp_list:
                 continue
 
@@ -100,6 +107,7 @@ if generate:
         ws.title = "Schedule"
 
         for giver, df in edited_tables.items():
+            # Table title
             ws.append([f"Breaker: {giver} | Date: {today_str} | Start: {giver_shift_times[giver][0]} | End: {giver_shift_times[giver][1]}"])
             title_row = ws.max_row
             ws.merge_cells(start_row=title_row, start_column=1, end_row=title_row, end_column=df.shape[1])
@@ -122,7 +130,6 @@ if generate:
             # Data
             for r in dataframe_to_rows(df, index=False, header=False):
                 ws.append(r)
-
             ws.append([])
 
         wb.save(buffer)
