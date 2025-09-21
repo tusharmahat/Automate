@@ -2,6 +2,11 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
 from io import BytesIO
+import warnings
+
+# Suppress console warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
 
 st.set_page_config(page_title="Break Scheduler", layout="wide")
 st.title("☕ Break Scheduler with Checker")
