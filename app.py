@@ -4,10 +4,8 @@ import pandas as pd
 from datetime import datetime, timedelta
 from io import BytesIO
 
-# --- Hide Python warnings ---
+# --- Hide warnings ---
 warnings.filterwarnings("ignore")
-
-# --- Hide browser console warnings ---
 hide_console_warning = """
 <script>
 console.warn = () => {};
@@ -25,9 +23,12 @@ st.sidebar.header("⚙️ Break Settings")
 break15 = timedelta(minutes=15)
 break30 = timedelta(minutes=30)
 first_break_after = timedelta(hours=2)
-stagger_gap = timedelta(minutes=0)  # continuous for each giver
+stagger_gap = timedelta(minutes=0)
 
 # --- Inputs ---
+st.subheader("📅 Date")
+schedule_date = st.date_input("Select schedule date", datetime.today())
+
 st.subheader("👨‍💼 Break Giver(s)")
 givers_input = st.text_input("Enter break giver names (comma-separated)", "Giver1, Giver2")
 givers = [g.strip() for g in givers_input.split(",") if g.strip()]
@@ -54,16 +55,14 @@ employees = [e.strip() for e in employees_input.split(",") if e.strip()]
 
 generate = st.button("Generate Schedule")
 
-# --- Initialize / persist schedule in session_state ---
+# --- Generate schedule ---
 if generate or "schedule" in st.session_state:
     try:
-        # Only generate new schedule if it doesn't exist or if user clicks generate
         if "schedule" not in st.session_state or generate:
             schedule = []
-            # Initialize giver times for scheduling
             current_times = {g: giver_times[g]["start"] + first_break_after for g in givers}
 
-            # Step 1: Assign 15-min breaks
+            # 15-min breaks
             for idx, emp in enumerate(employees):
                 giver = givers[idx % len(givers)]
                 start = current_times[giver]
@@ -71,10 +70,20 @@ if generate or "schedule" in st.session_state:
                 if end > giver_times[giver]["end"]:
                     end = giver_times[giver]["end"]
                     start = end - break15
-                schedule.append([emp, giver, "15 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
+                schedule.append([
+                    schedule_date.strftime("%Y-%m-%d"),  # Date
+                    emp,                                 # Employee
+                    giver,                               # Break Giver
+                    giver_times[giver]["start"].strftime("%H:%M"),  # Giver Start
+                    giver_times[giver]["end"].strftime("%H:%M"),    # Giver End
+                    "15 min",                            # Break Type
+                    start.strftime("%H:%M"),             # Break Start
+                    end.strftime("%H:%M"),               # Break End
+                    ""                                   # SA Initial
+                ])
                 current_times[giver] = end + stagger_gap
 
-            # Step 2: Assign 30-min breaks
+            # 30-min breaks
             for idx, emp in enumerate(employees):
                 giver = givers[idx % len(givers)]
                 start = current_times[giver]
@@ -82,13 +91,25 @@ if generate or "schedule" in st.session_state:
                 if end > giver_times[giver]["end"]:
                     end = giver_times[giver]["end"]
                     start = end - break30
-                schedule.append([emp, giver, "30 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
+                schedule.append([
+                    schedule_date.strftime("%Y-%m-%d"),
+                    emp,
+                    giver,
+                    giver_times[giver]["start"].strftime("%H:%M"),
+                    giver_times[giver]["end"].strftime("%H:%M"),
+                    "30 min",
+                    start.strftime("%H:%M"),
+                    end.strftime("%H:%M"),
+                    ""
+                ])
                 current_times[giver] = end + stagger_gap
 
-            # Store in session_state
             st.session_state.schedule = pd.DataFrame(
                 schedule,
-                columns=["Employee", "Break Giver", "Break Type", "Start", "End", "SA Initial"]
+                columns=[
+                    "Date", "Employee", "Break Giver", "Giver Start", "Giver End",
+                    "Break Type", "Break Start", "Break End", "SA Initial"
+                ]
             )
 
         # --- Editable tables per giver ---
@@ -105,10 +126,9 @@ if generate or "schedule" in st.session_state:
             )
             edited_tables[giver] = edited_df
 
-        # Merge all giver tables back to session_state
         st.session_state.schedule = pd.concat(edited_tables.values(), ignore_index=True)
 
-        # --- Checker: verify each employee has both breaks ---
+        # --- Checker ---
         warning_employees = []
         for emp in employees:
             emp_breaks = st.session_state.schedule[st.session_state.schedule["Employee"] == emp]["Break Type"].tolist()
@@ -116,7 +136,7 @@ if generate or "schedule" in st.session_state:
                 warning_employees.append(emp)
 
         if warning_employees:
-            st.warning(f"⚠️ The following employees are missing breaks: {', '.join(warning_employees)}")
+            st.warning(f"⚠️ Employees missing breaks: {', '.join(warning_employees)}")
         else:
             st.success("✅ All employees have both 15-min and 30-min breaks assigned.")
 
