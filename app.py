@@ -6,9 +6,10 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils.dataframe import dataframe_to_rows
 from openpyxl.cell.cell import MergedCell
+import math
 
 # --- Page setup ---
-st.set_page_config(page_title="☕ Break Scheduler", layout="wide")
+st.set_page_config(page_title="Break Scheduler", layout="wide")
 st.title("☕ Break Scheduler with Checker")
 
 # --- Settings ---
@@ -26,28 +27,25 @@ st.subheader("👥 Employees")
 employees_input = st.text_area("Enter all employees (comma-separated)", "Alice, Bob, Carol, Dave")
 employees = [e.strip() for e in employees_input.split(",") if e.strip()]
 
-# --- Date selection ---
+# --- Schedule Date ---
 st.subheader("📅 Select Schedule Date")
-schedule_date = st.date_input("Select Schedule Date", datetime.today())
+schedule_date = st.date_input("Select Schedule Date")
 
-# --- Shift input per giver ---
+# Shift input per giver
 giver_shift_times = {}
 for giver in givers:
     col1, col2 = st.columns(2)
     with col1:
-        start_time = st.time_input(f"{giver} Shift Start", datetime.strptime("09:00", "%H:%M").time())
+        start_str = st.time_input(f"{giver} Shift Start", datetime.strptime("09:00", "%H:%M").time())
     with col2:
-        end_time = st.time_input(f"{giver} Shift End", datetime.strptime("17:00", "%H:%M").time())
-    giver_shift_times[giver] = (start_time, end_time)
+        end_str = st.time_input(f"{giver} Shift End", datetime.strptime("17:00", "%H:%M").time())
+    giver_shift_times[giver] = (start_str, end_str)
 
 generate = st.button("Generate Schedule")
 
 if generate:
     try:
-        # --- Initialize session_state tables if not exist ---
-        for giver in givers:
-            if f"table_{giver}" not in st.session_state:
-                st.session_state[f"table_{giver}"] = pd.DataFrame()
+        schedule_tables = {}
 
         # --- Distribute employees evenly to givers ---
         distributed = {g: [] for g in givers}
@@ -55,51 +53,51 @@ if generate:
             giver = givers[i % len(givers)]
             distributed[giver].append(emp)
 
-        # --- Generate breaks for each giver (only if table empty) ---
+        # --- Generate breaks for each giver ---
         for giver in givers:
-            df = st.session_state[f"table_{giver}"]
-            if df.empty:
-                emp_list = distributed[giver]
-                if not emp_list:
-                    continue
+            emp_list = distributed[giver]
+            if not emp_list:
+                continue
 
-                shift_start = datetime.combine(schedule_date, giver_shift_times[giver][0])
-                shift_end = datetime.combine(schedule_date, giver_shift_times[giver][1])
-                giver_time = {emp: shift_start + first_break_after for emp in emp_list}
+            shift_start = datetime.combine(schedule_date, giver_shift_times[giver][0])
+            shift_end = datetime.combine(schedule_date, giver_shift_times[giver][1])
+            giver_time = {emp: shift_start + first_break_after for emp in emp_list}
 
-                schedule = []
+            schedule = []
 
-                # --- 15-min breaks for all except last ---
-                for emp in emp_list[:-1]:
-                    start = giver_time[emp]
-                    end = start + break15
-                    schedule.append([emp, giver, "15 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
-                    giver_time[emp] = end + stagger_gap
-
-                # --- Last employee 30-min first ---
-                last_emp = emp_list[-1]
-                start = giver_time[last_emp]
-                end = start + break30
-                schedule.append([last_emp, giver, "30 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
-                giver_time[last_emp] = end + stagger_gap
-
-                # --- 30-min breaks for others ---
-                for emp in emp_list[:-1]:
-                    start = giver_time[emp]
-                    end = start + break30
-                    schedule.append([emp, giver, "30 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
-                    giver_time[emp] = end + stagger_gap
-
-                # --- Last employee 15-min ---
-                start = giver_time[last_emp]
+            # --- 15-min breaks for all except last ---
+            for emp in emp_list[:-1]:
+                start = giver_time[emp]
                 end = start + break15
-                schedule.append([last_emp, giver, "15 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
+                schedule.append([emp, giver, "15 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
+                giver_time[emp] = end + stagger_gap
 
-                st.session_state[f"table_{giver}"] = pd.DataFrame(
-                    schedule, columns=["Employee", "Break Giver", "Break Type", "Start", "End", "SA Initial"]
-                )
+            # --- Last employee 30-min first ---
+            last_emp = emp_list[-1]
+            start = giver_time[last_emp]
+            end = start + break30
+            schedule.append([last_emp, giver, "30 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
+            giver_time[last_emp] = end + stagger_gap
 
-        # --- Streamlit editable tables ---
+            # --- 30-min breaks for others ---
+            for emp in emp_list[:-1]:
+                start = giver_time[emp]
+                end = start + break30
+                schedule.append([emp, giver, "30 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
+                giver_time[emp] = end + stagger_gap
+
+            # --- Last employee 15-min ---
+            start = giver_time[last_emp]
+            end = start + break15
+            schedule.append([last_emp, giver, "15 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
+
+            df = pd.DataFrame(schedule, columns=["Employee", "Break Giver", "Break Type", "Start", "End", "SA Initial"])
+            schedule_tables[giver] = df
+
+            # Save to session_state for persistence
+            st.session_state[f"table_{giver}"] = df
+
+        # --- Streamlit tables ---
         st.subheader("📅 Editable Schedule Per Break Giver")
         for giver in givers:
             df = st.session_state.get(f"table_{giver}", pd.DataFrame())
@@ -108,15 +106,17 @@ if generate:
 
             st.markdown(f"**Breaker: {giver} | Date: {schedule_date} | Start: {giver_shift_times[giver][0]} | End: {giver_shift_times[giver][1]}**")
 
-            # Use data_editor with session_state for persistence
+            # Only drop "Break Giver" if it exists
+            display_df = df.drop(columns="Break Giver") if "Break Giver" in df.columns else df
+
             edited_df = st.data_editor(
-                df.drop(columns="Break Giver"),
+                display_df,
                 num_rows="dynamic",
                 use_container_width=True,
                 key=f"editor_{giver}"
             )
 
-            # Update session_state in-place to preserve added rows
+            # Update session_state in-place to preserve data and allow new rows
             st.session_state[f"table_{giver}"].iloc[:, :] = edited_df
 
         # --- Excel export ---
