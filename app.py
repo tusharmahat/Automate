@@ -3,15 +3,15 @@ import pandas as pd
 from datetime import datetime, timedelta
 from io import BytesIO
 
-st.set_page_config(page_title="Continuous Break Scheduler", layout="wide")
-st.title("☕ Continuous Break Scheduler per Break Giver")
+st.set_page_config(page_title="Break Scheduler", layout="wide")
+st.title("☕ Break Scheduler (15-min first, then 30-min)")
 
 # --- Settings ---
 st.sidebar.header("⚙️ Break Settings")
 break15 = timedelta(minutes=15)
 break30 = timedelta(minutes=30)
 first_break_after = timedelta(hours=2)
-min_gap_between_breaks = timedelta(minutes=0)  # Continuous for each giver
+stagger_gap = timedelta(minutes=0)  # continuous for each giver
 
 # --- Inputs ---
 st.subheader("👨‍💼 Break Giver(s)")
@@ -41,39 +41,24 @@ if generate and employees and givers:
 
         schedule = []
 
-        # Step 1: Assign all 15-min breaks first (except last employee if special rule)
-        for idx, emp in enumerate(employees):
-            # Determine break order for last employee
-            if idx == len(employees) - 1:
-                first_type, second_type = "30 min", "15 min"
-                first_duration, second_duration = break30, break15
-            else:
-                first_type, second_type = "15 min", "30 min"
-                first_duration, second_duration = break15, break30
-
-            # Assign first break
-            giver = givers[idx % giver_count]
-            start1 = giver_time[giver]
-            end1 = start1 + first_duration
-            schedule.append([emp, giver, first_type, start1.strftime("%H:%M"), end1.strftime("%H:%M"), ""])
-            # Update giver time
-            giver_time[giver] = end1 + min_gap_between_breaks
-
-        # Step 2: Assign second break for all employees
+        # --- Step 1: Assign all 15-min breaks first ---
         for idx, emp in enumerate(employees):
             giver = givers[idx % giver_count]
-            # For last employee, order reversed
-            if idx == len(employees) - 1 and second_type == "15 min":
-                start2 = giver_time[giver]
-                end2 = start2 + break15
-            else:
-                start2 = giver_time[giver]
-                end2 = start2 + break30
-            if end2 > shift_end:
-                end2 = shift_end
-                start2 = end2 - (break30 if second_type=="30 min" else break15)
-            schedule.append([emp, giver, second_type, start2.strftime("%H:%M"), end2.strftime("%H:%M"), ""])
-            giver_time[giver] = end2 + min_gap_between_breaks
+            start = giver_time[giver]
+            end = start + break15
+            schedule.append([emp, giver, "15 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
+            giver_time[giver] = end + stagger_gap
+
+        # --- Step 2: Assign all 30-min breaks ---
+        for idx, emp in enumerate(employees):
+            giver = givers[idx % giver_count]
+            start = giver_time[giver]
+            end = start + break30
+            if end > shift_end:
+                end = shift_end
+                start = end - break30
+            schedule.append([emp, giver, "30 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
+            giver_time[giver] = end + stagger_gap
 
         df = pd.DataFrame(schedule, columns=["Employee", "Break Giver", "Break Type", "Start", "End", "SA Initial"])
 
