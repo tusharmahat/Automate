@@ -38,60 +38,60 @@ st.subheader("👥 Employees")
 employees_input = st.text_area("Enter employee names (comma-separated)", "Alice, Bob, Carol, Dave")
 employees = [e.strip() for e in employees_input.split(",") if e.strip()]
 
-col1, col2, col3 = st.columns(3)
-with col1:
-    shift_start_str = st.text_input("Shift Start (HH:MM)", "09:00")
-with col2:
-    shift_end_str = st.text_input("Shift End (HH:MM)", "17:00")
-with col3:
-    schedule_date = st.date_input("Date", datetime.today())
+# Shift start/end per giver
+st.subheader("⏰ Break Giver Shift Times")
+giver_times = {}
+for giver in givers:
+    col1, col2 = st.columns(2)
+    with col1:
+        start_str = st.text_input(f"{giver} Start Time (HH:MM)", "09:00", key=f"{giver}_start")
+    with col2:
+        end_str = st.text_input(f"{giver} End Time (HH:MM)", "17:00", key=f"{giver}_end")
+    giver_times[giver] = (datetime.strptime(start_str, "%H:%M"), datetime.strptime(end_str, "%H:%M"))
 
 generate = st.button("Generate Schedule")
 
+# --- Initialize / persist schedule in session_state ---
 if generate or "schedule" in st.session_state:
     try:
-        shift_start = datetime.strptime(shift_start_str, "%H:%M")
-        shift_end = datetime.strptime(shift_end_str, "%H:%M")
-        schedule_date_str = schedule_date.strftime("%Y-%m-%d")
-
-        giver_count = len(givers)
-        giver_time = {g: shift_start + first_break_after for g in givers}
-
-        # --- Generate schedule only if not exists ---
         if "schedule" not in st.session_state or generate:
             schedule = []
-            # 15-min breaks
+
+            # --- Step 1: Assign all 15-min breaks first ---
             for idx, emp in enumerate(employees):
-                giver = givers[idx % giver_count]
-                start = giver_time[giver]
+                giver = givers[idx % len(givers)]
+                start, shift_end = giver_times[giver]
+                start = start + first_break_after + timedelta(minutes=idx*15)  # stagger per employee
                 end = start + break15
+                if end > shift_end:
+                    end = shift_end
+                    start = end - break15
                 schedule.append([emp, giver, "15 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
-                giver_time[giver] = end + stagger_gap
-            # 30-min breaks
+
+            # --- Step 2: Assign all 30-min breaks ---
             for idx, emp in enumerate(employees):
-                giver = givers[idx % giver_count]
-                start = giver_time[giver]
+                giver = givers[idx % len(givers)]
+                start, shift_end = giver_times[giver]
+                start = start + first_break_after + timedelta(minutes=15*len(employees) + idx*30)
                 end = start + break30
                 if end > shift_end:
                     end = shift_end
                     start = end - break30
                 schedule.append([emp, giver, "30 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
-                giver_time[giver] = end + stagger_gap
 
-            st.session_state.schedule = pd.DataFrame(
-                schedule, columns=["Employee", "Break Giver", "Break Type", "Start", "End", "SA Initial"]
-            )
+            st.session_state.schedule = pd.DataFrame(schedule, columns=["Employee", "Break Giver", "Break Type", "Start", "End", "SA Initial"])
 
         # --- Editable tables per giver ---
         st.subheader("📅 Editable Schedule Per Break Giver")
         edited_tables = {}
+        today_str = datetime.now().strftime("%Y-%m-%d")
         for giver in givers:
-            st.markdown(f"### Breaker: {giver} | Date: {schedule_date_str} | Start time: {shift_start_str}")
+            st.markdown(f"**Breaker: {giver} | Date: {today_str} | Start time: {giver_times[giver][0].strftime('%H:%M')}**")
             giver_df = st.session_state.schedule[st.session_state.schedule["Break Giver"] == giver].reset_index(drop=True)
             edited_df = st.data_editor(giver_df, num_rows="dynamic", use_container_width=True, key=f"editor_{giver}")
             edited_tables[giver] = edited_df
 
-        # Merge back
+        # Merge all giver tables back to session_state
         st.session_state.schedule = pd.concat(edited_tables.values(), ignore_index=True)
 
         # --- Checker ---
@@ -101,16 +101,16 @@ if generate or "schedule" in st.session_state:
             if "15 min" not in emp_breaks or "30 min" not in emp_breaks:
                 warning_employees.append(emp)
         if warning_employees:
-            st.warning(f"⚠️ Missing breaks: {', '.join(warning_employees)}")
+            st.warning(f"⚠️ Employees missing breaks: {', '.join(warning_employees)}")
         else:
-            st.success("✅ All employees have both breaks assigned.")
+            st.success("✅ All employees have both 15-min and 30-min breaks assigned.")
 
-        # --- Download ---
+        # --- Download CSV ---
         st.subheader("⬇️ Download Schedule")
         csv = st.session_state.schedule.to_csv(index=False).encode("utf-8")
         st.download_button("Download CSV", csv, "break_schedule.csv", "text/csv")
 
-        # --- Excel with beautification ---
+        # --- Download Excel with beautification ---
         buffer = BytesIO()
         with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
             for giver, g_df in edited_tables.items():
@@ -119,7 +119,7 @@ if generate or "schedule" in st.session_state:
 
                 ws = writer.book.create_sheet(title=ws_name)
                 # Title row
-                title = f"Breaker: {giver} | Date: {schedule_date_str} | Start time: {shift_start_str}"
+                title = f"Breaker: {giver} | Date: {today_str} | Start time: {giver_times[giver][0].strftime('%H:%M')}"
                 ws.append([title])
                 ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(g_df_copy.columns))
                 ws["A1"].font = Font(bold=True, color="FFFFFF", size=12)
@@ -132,7 +132,11 @@ if generate or "schedule" in st.session_state:
                     cell.font = Font(bold=True, color="FFFFFF")
                     cell.fill = PatternFill("solid", fgColor="4F81BD")
 
-                # Table rows with alternating colors
+                # Append DataFrame rows
+                for idx, row in g_df_copy.iterrows():
+                    ws.append(list(row))
+
+                # Alternating row colors starting from row 3 (after header)
                 fill1 = PatternFill("solid", fgColor="DCE6F1")
                 fill2 = PatternFill("solid", fgColor="FFFFFF")
                 for idx, row in enumerate(ws.iter_rows(min_row=3, max_row=ws.max_row)):
@@ -145,10 +149,8 @@ if generate or "schedule" in st.session_state:
                     max_length = max(len(str(cell.value)) if cell.value else 0 for cell in col)
                     ws.column_dimensions[get_column_letter(col[0].column)].width = max_length + 2
 
-        st.download_button(
-            "Download Excel (per giver)", buffer, "break_schedule.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+        st.download_button("Download Excel (per giver)", buffer, "break_schedule.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
     except Exception as e:
         st.error(f"⚠️ {e}")
