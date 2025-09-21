@@ -4,13 +4,13 @@ from datetime import datetime, timedelta
 from io import BytesIO
 
 st.set_page_config(page_title="Break Scheduler", layout="wide")
-st.title("☕ Break Scheduler (by Break Giver)")
+st.title("☕ Custom Break Scheduler (Per Break Giver)")
 
 # --- Sidebar settings ---
 st.sidebar.header("⚙️ Break Settings")
 break15 = timedelta(minutes=15)
 break30 = timedelta(minutes=30)
-min_gap = timedelta(hours=2)          # min gap between 30 & 15
+min_gap = timedelta(hours=2)          # gap between first and second break
 stagger_gap = timedelta(minutes=15)   # stagger breaks
 first_break_after = timedelta(hours=2)
 
@@ -45,18 +45,28 @@ if generate and employees and givers:
         for i, emp in enumerate(employees):
             giver = givers[i % giver_count]  # evenly distribute
 
-            # 30-min break (always first)
-            start30 = shift_start + first_break_after + (i * stagger_gap)
-            end30 = start30 + break30
+            # Determine break order
+            if i == len(employees) - 1:
+                # Last employee: 30-min first
+                first_type, second_type = "30 min", "15 min"
+                first_duration, second_duration = break30, break15
+            else:
+                # Everyone else: 15-min first
+                first_type, second_type = "15 min", "30 min"
+                first_duration, second_duration = break15, break30
 
-            # 15-min break (later)
-            start15 = start30 + min_gap
-            if start15 + break15 > shift_end:
-                start15 = shift_end - break15
-            end15 = start15 + break15
+            # First break
+            start1 = shift_start + first_break_after + (i * stagger_gap)
+            end1 = start1 + first_duration
 
-            schedule.append([emp, giver, "30 min", start30.strftime("%H:%M"), end30.strftime("%H:%M"), ""])
-            schedule.append([emp, giver, "15 min", start15.strftime("%H:%M"), end15.strftime("%H:%M"), ""])
+            # Second break
+            start2 = start1 + min_gap
+            if start2 + second_duration > shift_end:
+                start2 = shift_end - second_duration
+            end2 = start2 + second_duration
+
+            schedule.append([emp, giver, first_type, start1.strftime("%H:%M"), end1.strftime("%H:%M"), ""])
+            schedule.append([emp, giver, second_type, start2.strftime("%H:%M"), end2.strftime("%H:%M"), ""])
 
         df = pd.DataFrame(schedule, columns=["Employee", "Break Giver", "Break Type", "Start", "End", "SA Initial"])
 
@@ -83,7 +93,7 @@ if generate and employees and givers:
         buffer = BytesIO()
         with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
             for giver, giver_df in edited_tables.items():
-                giver_df.to_excel(writer, index=False, sheet_name=giver[:31])  # Excel sheet name max 31 chars
+                giver_df.to_excel(writer, index=False, sheet_name=giver[:31])
         st.download_button(
             "Download All (Excel, per giver)",
             data=buffer,
