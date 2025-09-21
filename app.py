@@ -105,7 +105,7 @@ if generate:
         wb = Workbook()
         ws = wb.active
         ws.title = "Schedule"
-
+        
         for giver, df in edited_tables.items():
             # Table title
             ws.append([f"Breaker: {giver} | Date: {today_str} | Start: {giver_shift_times[giver][0]} | End: {giver_shift_times[giver][1]}"])
@@ -115,7 +115,7 @@ if generate:
             cell.font = Font(bold=True, color="FFFFFF")
             cell.fill = PatternFill("solid", fgColor="4F81BD")
             cell.alignment = Alignment(horizontal="center")
-
+        
             # Header
             ws.append(df.columns.tolist())
             header_row = ws.max_row
@@ -126,12 +126,23 @@ if generate:
                 c.alignment = Alignment(horizontal="center")
                 thin = Side(border_style="thin", color="000000")
                 c.border = Border(top=thin, left=thin, right=thin, bottom=thin)
-
+        
             # Data
             for r in dataframe_to_rows(df, index=False, header=False):
                 ws.append(r)
             ws.append([])
-
+        
+        # --- Adjust column widths based on max length ---
+        for ws in wb.worksheets:
+            for col in ws.columns:
+                max_length = 0
+                col_letter = col[0].column_letter
+                for cell in col:
+                    if cell.value:
+                        max_length = max(max_length, len(str(cell.value)))
+                adjusted_width = (max_length + 2)
+                ws.column_dimensions[col_letter].width = adjusted_width
+        
         wb.save(buffer)
         st.download_button("Download Excel", buffer, "break_schedule.xlsx",
                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
