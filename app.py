@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from io import BytesIO
 
 st.set_page_config(page_title="Break Scheduler", layout="wide")
-st.title("☕ Break Scheduler (15-min first, then 30-min)")
+st.title("☕ Break Scheduler with Checker")
 
 # --- Settings ---
 st.sidebar.header("⚙️ Break Settings")
@@ -36,7 +36,6 @@ if generate and employees and givers:
         shift_end = datetime.strptime(shift_end_str, "%H:%M")
 
         giver_count = len(givers)
-        # Initialize current time per giver
         giver_time = {g: shift_start + first_break_after for g in givers}
 
         schedule = []
@@ -70,9 +69,22 @@ if generate and employees and givers:
             edited_df = st.data_editor(giver_df, num_rows="dynamic", use_container_width=True)
             edited_tables[giver] = edited_df
 
-        # --- Download ---
         final_df = pd.concat(edited_tables.values(), ignore_index=True)
 
+        # --- Checker: verify each employee has both breaks ---
+        warning_employees = []
+        for emp in employees:
+            emp_breaks = final_df[final_df["Employee"]==emp]["Break Type"].tolist()
+            if "15 min" not in emp_breaks or "30 min" not in emp_breaks:
+                warning_employees.append(emp)
+
+        if warning_employees:
+            st.warning(f"⚠️ The following employees are missing breaks: {', '.join(warning_employees)}")
+        else:
+            st.success("✅ All employees have both 15-min and 30-min breaks assigned.")
+
+        # --- Download ---
+        st.subheader("⬇️ Download Schedule")
         csv = final_df.to_csv(index=False).encode("utf-8")
         st.download_button("Download CSV", csv, "break_schedule.csv", "text/csv")
 
