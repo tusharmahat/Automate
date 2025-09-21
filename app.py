@@ -35,11 +35,8 @@ givers = [g.strip() for g in givers_input.split(",") if g.strip()]
 st.subheader("⏰ Break Giver Timings")
 giver_times = {}
 for giver in givers:
-    col1, col2 = st.columns(2)
-    with col1:
-        start_str = st.text_input(f"{giver} Start Time (HH:MM)", "09:00", key=f"{giver}_start")
-    with col2:
-        end_str = st.text_input(f"{giver} End Time (HH:MM)", "17:00", key=f"{giver}_end")
+    start_str = st.text_input(f"{giver} Start Time (HH:MM)", "09:00", key=f"{giver}_start")
+    end_str = st.text_input(f"{giver} End Time (HH:MM)", "17:00", key=f"{giver}_end")
     try:
         giver_times[giver] = {
             "start": datetime.strptime(start_str, "%H:%M"),
@@ -68,7 +65,7 @@ if generate or "schedule" in st.session_state:
                 if end > giver_times[giver]["end"]:
                     end = giver_times[giver]["end"]
                     start = end - break15
-                schedule.append([emp, giver, "15 min", start.strftime("%H:%M"), end.strftime("%H:%M"), shift_date.strftime("%Y-%m-%d")])
+                schedule.append([emp, "15 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
                 current_times[giver] = end + stagger_gap
 
             for idx, emp in enumerate(employees):
@@ -78,22 +75,20 @@ if generate or "schedule" in st.session_state:
                 if end > giver_times[giver]["end"]:
                     end = giver_times[giver]["end"]
                     start = end - break30
-                schedule.append([emp, giver, "30 min", start.strftime("%H:%M"), end.strftime("%H:%M"), shift_date.strftime("%Y-%m-%d")])
+                schedule.append([emp, "30 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
                 current_times[giver] = end + stagger_gap
 
             st.session_state.schedule = pd.DataFrame(
                 schedule,
-                columns=["Employee", "Break Giver", "Break Type", "Start", "End", "Date"]
+                columns=["Employee", "Break Type", "Start", "End", "SA Initial"]
             )
 
-        # --- Editable tables per giver with table titles ---
+        # --- Editable tables per giver with custom title ---
         st.subheader("📅 Editable Schedule Per Break Giver")
         edited_tables = {}
         for giver in givers:
-            # Table title with Break Giver, Date, Shift
-            st.markdown(f"### Break Giver: {giver} | Date: {shift_date.strftime('%Y-%m-%d')} | Shift: {giver_times[giver]['start'].strftime('%H:%M')}-{giver_times[giver]['end'].strftime('%H:%M')}")
-            
-            giver_df = st.session_state.schedule[st.session_state.schedule["Break Giver"] == giver].reset_index(drop=True)
+            st.markdown(f"### Breaker: {giver} | Date: {shift_date.strftime('%Y-%m-%d')} | Start time: {giver_times[giver]['start'].strftime('%H:%M')}")
+            giver_df = st.session_state.schedule.copy()  # Use copy for editing
             edited_df = st.data_editor(
                 giver_df,
                 num_rows="dynamic",
@@ -102,6 +97,7 @@ if generate or "schedule" in st.session_state:
             )
             edited_tables[giver] = edited_df
 
+        # Merge all giver tables
         st.session_state.schedule = pd.concat(edited_tables.values(), ignore_index=True)
 
         # --- Checker ---
@@ -125,8 +121,4 @@ if generate or "schedule" in st.session_state:
         with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
             for giver, g_df in edited_tables.items():
                 g_df.to_excel(writer, index=False, sheet_name=giver[:31])
-        st.download_button("Download Excel (per giver)", buffer, "break_schedule.xlsx",
-                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-    except Exception as e:
-        st.error(f"⚠️ {e}")
+        st.download_button("Download Excel (per_
