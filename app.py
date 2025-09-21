@@ -4,9 +4,10 @@ from datetime import datetime, timedelta
 from io import BytesIO
 import warnings
 
-# Suppress console warnings
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings("ignore", category=UserWarning)
+# --- Suppress warnings ---
+warnings.filterwarnings("ignore")  # Hide Python warnings
+st.set_option('deprecation.showPyplotGlobalUse', False)
+st.set_option('global.deprecationWarning', False)
 
 st.set_page_config(page_title="Break Scheduler", layout="wide")
 st.title("☕ Break Scheduler with Checker")
