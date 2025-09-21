@@ -4,12 +4,12 @@ import pandas as pd
 from datetime import datetime, timedelta
 from io import BytesIO
 from openpyxl import Workbook
-from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
-# --- Hide warnings ---
+# --- Hide Python warnings ---
 warnings.filterwarnings("ignore")
 
-# --- Hide console warnings ---
+# --- Hide browser console warnings ---
 hide_console_warning = """
 <script>
 console.warn = () => {};
@@ -44,70 +44,71 @@ with col1:
 with col2:
     shift_end_str = st.text_input("Shift End (HH:MM)", "17:00")
 
-st_date = st.date_input("Schedule Date", datetime.today())
 generate = st.button("Generate Schedule")
 
-# --- Generate / persist schedule ---
 if generate or "schedule" in st.session_state:
     try:
         shift_start = datetime.strptime(shift_start_str, "%H:%M")
         shift_end = datetime.strptime(shift_end_str, "%H:%M")
-        giver_times = {g: shift_start for g in givers}
 
+        giver_count = len(givers)
+        giver_times = {g: shift_start + first_break_after for g in givers}
+
+        # --- Generate schedule ---
         if "schedule" not in st.session_state or generate:
             schedule = []
 
-            for idx, emp in enumerate(employees):
-                giver = givers[idx % len(givers)]
-                start_time = giver_times[giver]
+            # Step 1: Assign 15-min breaks to everyone except last
+            for idx, emp in enumerate(employees[:-1]):
+                giver = givers[idx % giver_count]
+                start = giver_times[giver]
+                end = start + break15
+                schedule.append([emp, giver, "15 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
+                giver_times[giver] = end + stagger_gap
 
-                if idx == len(employees) - 1:  # last employee
-                    # 30-min first
-                    start_30 = start_time + first_break_after
-                    end_30 = start_30 + break30
-                    if end_30 > shift_end:
-                        end_30 = shift_end
-                        start_30 = end_30 - break30
-                    schedule.append([emp, giver, "30 min", start_30.strftime("%H:%M"), end_30.strftime("%H:%M"), ""])
-                    giver_times[giver] = end_30 + stagger_gap
+            # Step 2: Assign 30-min breaks to everyone except last
+            for idx, emp in enumerate(employees[:-1]):
+                giver = givers[idx % giver_count]
+                start = giver_times[giver]
+                end = start + break30
+                if end > shift_end:
+                    end = shift_end
+                    start = end - break30
+                schedule.append([emp, giver, "30 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
+                giver_times[giver] = end + stagger_gap
 
-                    # 15-min last
-                    start_15 = giver_times[giver]
-                    end_15 = start_15 + break15
-                    if end_15 > shift_end:
-                        end_15 = shift_end
-                        start_15 = end_15 - break15
-                    schedule.append([emp, giver, "15 min", start_15.strftime("%H:%M"), end_15.strftime("%H:%M"), ""])
-                    giver_times[giver] = end_15 + stagger_gap
-                else:
-                    # 15-min first
-                    start_15 = start_time + first_break_after
-                    end_15 = start_15 + break15
-                    schedule.append([emp, giver, "15 min", start_15.strftime("%H:%M"), end_15.strftime("%H:%M"), ""])
-                    giver_times[giver] = end_15 + stagger_gap
+            # Step 3 & 4: Last employee gets 30-min first, then 15-min
+            last_emp = employees[-1]
+            giver = givers[(len(employees)-1) % giver_count]
+            start = giver_times[giver]
+            end = start + break30
+            if end > shift_end:
+                end = shift_end
+                start = end - break30
+            schedule.append([last_emp, giver, "30 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
+            giver_times[giver] = end + stagger_gap
 
-                    # 30-min second
-                    start_30 = giver_times[giver]
-                    end_30 = start_30 + break30
-                    if end_30 > shift_end:
-                        end_30 = shift_end
-                        start_30 = end_30 - break30
-                    schedule.append([emp, giver, "30 min", start_30.strftime("%H:%M"), end_30.strftime("%H:%M"), ""])
-                    giver_times[giver] = end_30 + stagger_gap
+            start = giver_times[giver]
+            end = start + break15
+            if end > shift_end:
+                end = shift_end
+                start = end - break15
+            schedule.append([last_emp, giver, "15 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
+            giver_times[giver] = end + stagger_gap
 
-            st.session_state.schedule = pd.DataFrame(
-                schedule, columns=["Employee", "Break Giver", "Break Type", "Start", "End", "SA Initial"]
-            )
+            st.session_state.schedule = pd.DataFrame(schedule, columns=["Employee", "Break Giver", "Break Type", "Start", "End", "SA Initial"])
 
         # --- Editable tables per giver ---
         st.subheader("📅 Editable Schedule Per Break Giver")
         edited_tables = {}
+        today_str = datetime.today().strftime("%Y-%m-%d")
         for giver in givers:
-            st.markdown(f"### Breaker: {giver} | Date: {st_date} | Start time: {shift_start_str}")
+            st.markdown(f"**Breaker: {giver} | Date: {today_str} | Start time: {shift_start_str}**")
             giver_df = st.session_state.schedule[st.session_state.schedule["Break Giver"] == giver].reset_index(drop=True)
             edited_df = st.data_editor(giver_df, num_rows="dynamic", use_container_width=True, key=f"editor_{giver}")
             edited_tables[giver] = edited_df
 
+        # Merge back to session_state
         st.session_state.schedule = pd.concat(edited_tables.values(), ignore_index=True)
 
         # --- Checker ---
@@ -127,44 +128,41 @@ if generate or "schedule" in st.session_state:
         csv = st.session_state.schedule.to_csv(index=False).encode("utf-8")
         st.download_button("Download CSV", csv, "break_schedule.csv", "text/csv")
 
-        # --- Download Excel (Beautified) ---
+        # --- Download Excel ---
         buffer = BytesIO()
         wb = Workbook()
-
-        for giver, df in edited_tables.items():
+        for giver, g_df in edited_tables.items():
             ws = wb.create_sheet(title=giver[:31])
-            # Title row
-            ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(df.columns))
-            ws["A1"] = f"Breaker: {giver} | Date: {st_date} | Start time: {shift_start_str}"
-            ws["A1"].font = Font(bold=True, size=12)
-            ws["A1"].alignment = Alignment(horizontal="center")
-            ws["A1"].fill = PatternFill("solid", fgColor="DDDDDD")
+            # Table title row
+            ws.append([f"Breaker: {giver} | Date: {today_str} | Start time: {shift_start_str}"])
+            ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=5)
+            cell = ws.cell(row=1, column=1)
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
+            cell.alignment = Alignment(horizontal="center")
 
-            # Header row
-            for col_idx, col_name in enumerate(df.columns, 1):
-                cell = ws.cell(row=2, column=col_idx, value=col_name)
-                cell.font = Font(bold=True)
-                cell.alignment = Alignment(horizontal="center")
-                cell.fill = PatternFill("solid", fgColor="CCCCFF")
-                cell.border = Border(left=Side(style="thin"), right=Side(style="thin"),
-                                     top=Side(style="thin"), bottom=Side(style="thin"))
+            # Column headers
+            ws.append(list(g_df.columns))
+            for col_cell in ws[2]:
+                col_cell.font = Font(bold=True, color="FFFFFF")
+                col_cell.fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
+                col_cell.alignment = Alignment(horizontal="center")
+                col_cell.border = Border(left=Side(style='thin'),
+                                         right=Side(style='thin'),
+                                         top=Side(style='thin'),
+                                         bottom=Side(style='thin'))
 
             # Data rows
-            for r_idx, row in df.iterrows():
-                for c_idx, value in enumerate(row, 1):
-                    cell = ws.cell(row=r_idx + 3, column=c_idx, value=value)
-                    cell.alignment = Alignment(horizontal="center")
-                    cell.border = Border(left=Side(style="thin"), right=Side(style="thin"),
-                                         top=Side(style="thin"), bottom=Side(style="thin"))
+            for r in g_df.itertuples(index=False):
+                ws.append(r)
+            for row in ws.iter_rows(min_row=3, max_row=ws.max_row, min_col=1, max_col=5):
+                for cell in row:
+                    cell.border = Border(left=Side(style='thin'),
+                                         right=Side(style='thin'),
+                                         top=Side(style='thin'),
+                                         bottom=Side(style='thin'))
 
-            # Adjust column widths
-            for col_idx, col_name in enumerate(df.columns, 1):
-                ws.column_dimensions[chr(64 + col_idx)].width = max(len(str(col_name)), 12)
-
-        # Remove default sheet
-        if "Sheet" in wb.sheetnames:
-            wb.remove(wb["Sheet"])
-
+        wb.remove(wb["Sheet"])
         wb.save(buffer)
         st.download_button("Download Excel (per giver)", buffer, "break_schedule.xlsx",
                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
