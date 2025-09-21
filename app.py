@@ -39,68 +39,65 @@ for giver in givers:
 
 generate = st.button("Generate Schedule")
 
-if generate:
+# --- Generate schedule only if not in session_state or user clicks generate ---
+if generate or "schedule_tables" in st.session_state:
     try:
         today_str = datetime.today().strftime("%Y-%m-%d")
-        schedule_tables = {}
 
-        # --- Distribute employees evenly to givers ---
-        distributed = {g: [] for g in givers}
-        for i, emp in enumerate(employees):
-            giver = givers[i % len(givers)]
-            distributed[giver].append(emp)
+        if generate or "schedule_tables" not in st.session_state:
+            # --- Distribute employees evenly to givers ---
+            distributed = {g: [] for g in givers}
+            for i, emp in enumerate(employees):
+                giver = givers[i % len(givers)]
+                distributed[giver].append(emp)
 
-        # --- Generate breaks for each giver ---
-        for giver in givers:
-            emp_list = distributed[giver]
-            if not emp_list:
-                continue
+            # --- Generate breaks for each giver ---
+            schedule_tables = {}
+            for giver in givers:
+                emp_list = distributed[giver]
+                if not emp_list:
+                    continue
 
-            shift_start = datetime.strptime(giver_shift_times[giver][0], "%H:%M")
-            shift_end = datetime.strptime(giver_shift_times[giver][1], "%H:%M")
-            giver_time = {emp: shift_start + first_break_after for emp in emp_list}
+                shift_start = datetime.strptime(giver_shift_times[giver][0], "%H:%M")
+                shift_end = datetime.strptime(giver_shift_times[giver][1], "%H:%M")
+                giver_time = {emp: shift_start + first_break_after for emp in emp_list}
 
-            schedule = []
+                schedule = []
 
-            # --- 15-min breaks for all except last ---
-            for emp in emp_list[:-1]:
-                start = giver_time[emp]
-                end = start + break15
-                schedule.append([emp, giver, "15 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
-                giver_time[emp] = end + stagger_gap
+                # --- 15-min breaks for all except last ---
+                for emp in emp_list[:-1]:
+                    start = giver_time[emp]
+                    end = start + break15
+                    schedule.append([emp, giver, "15 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
+                    giver_time[emp] = end + stagger_gap
 
-            # --- Last employee 30-min first ---
-            last_emp = emp_list[-1]
-            start = giver_time[last_emp]
-            end = start + break30
-            schedule.append([last_emp, giver, "30 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
-            giver_time[last_emp] = end + stagger_gap
-
-            # --- 30-min breaks for others ---
-            for emp in emp_list[:-1]:
-                start = giver_time[emp]
+                # --- Last employee 30-min first ---
+                last_emp = emp_list[-1]
+                start = giver_time[last_emp]
                 end = start + break30
-                schedule.append([emp, giver, "30 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
-                giver_time[emp] = end + stagger_gap
+                schedule.append([last_emp, giver, "30 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
+                giver_time[last_emp] = end + stagger_gap
 
-            # --- Last employee 15-min ---
-            start = giver_time[last_emp]
-            end = start + break15
-            schedule.append([last_emp, giver, "15 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
+                # --- 30-min breaks for others ---
+                for emp in emp_list[:-1]:
+                    start = giver_time[emp]
+                    end = start + break30
+                    schedule.append([emp, giver, "30 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
+                    giver_time[emp] = end + stagger_gap
 
-            df = pd.DataFrame(schedule, columns=["Employee", "Break Giver", "Break Type", "Start", "End", "SA Initial"])
-            schedule_tables[giver] = df
+                # --- Last employee 15-min ---
+                start = giver_time[last_emp]
+                end = start + break15
+                schedule.append([last_emp, giver, "15 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
 
-            # Save to session_state for persistence
-            st.session_state[f"table_{giver}"] = df
+                df = pd.DataFrame(schedule, columns=["Employee", "Break Giver", "Break Type", "Start", "End", "SA Initial"])
+                schedule_tables[giver] = df
+
+            st.session_state.schedule_tables = schedule_tables
 
         # --- Streamlit tables ---
         st.subheader("📅 Editable Schedule Per Break Giver")
-        for giver in givers:
-            df = st.session_state.get(f"table_{giver}", pd.DataFrame())
-            if df.empty:
-                continue
-
+        for giver, df in st.session_state.schedule_tables.items():
             st.markdown(f"**Breaker: {giver} | Date: {today_str} | Start: {giver_shift_times[giver][0]} | End: {giver_shift_times[giver][1]}**")
 
             edited_df = st.data_editor(
@@ -109,9 +106,8 @@ if generate:
                 use_container_width=True,
                 key=f"editor_{giver}"
             )
-
             # Save edits back to session_state
-            st.session_state[f"table_{giver}"] = edited_df
+            st.session_state.schedule_tables[giver] = edited_df
 
         # --- Excel export ---
         st.subheader("⬇️ Download Schedule")
@@ -120,11 +116,7 @@ if generate:
         ws = wb.active
         ws.title = "Schedule"
 
-        for giver in givers:
-            df = st.session_state.get(f"table_{giver}", pd.DataFrame())
-            if df.empty:
-                continue
-
+        for giver, df in st.session_state.schedule_tables.items():
             # Table title
             ws.append([f"Breaker: {giver} | Date: {today_str} | Start: {giver_shift_times[giver][0]} | End: {giver_shift_times[giver][1]}"])
             title_row = ws.max_row
