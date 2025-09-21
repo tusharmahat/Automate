@@ -44,6 +44,8 @@ with col2:
 
 generate = st.button("Generate Schedule")
 
+generate = st.button("Generate Schedule")
+
 if generate and employees and givers:
     try:
         shift_start = datetime.strptime(shift_start_str, "%H:%M")
@@ -52,40 +54,49 @@ if generate and employees and givers:
         giver_count = len(givers)
         giver_time = {g: shift_start + first_break_after for g in givers}
 
+        # --- Step 1 & 2: Build initial schedule ---
         schedule = []
-
-        # --- Step 1: Assign all 15-min breaks first ---
         for idx, emp in enumerate(employees):
             giver = givers[idx % giver_count]
-            start = giver_time[giver]
-            end = start + break15
-            schedule.append([emp, giver, "15 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
-            giver_time[giver] = end + stagger_gap
+            # 15-min break
+            start15 = giver_time[giver]
+            end15 = start15 + break15
+            schedule.append([emp, giver, "15 min", start15.strftime("%H:%M"), end15.strftime("%H:%M"), ""])
+            giver_time[giver] = end15 + stagger_gap
 
-        # --- Step 2: Assign all 30-min breaks ---
         for idx, emp in enumerate(employees):
             giver = givers[idx % giver_count]
-            start = giver_time[giver]
-            end = start + break30
-            if end > shift_end:
-                end = shift_end
-                start = end - break30
-            schedule.append([emp, giver, "30 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
-            giver_time[giver] = end + stagger_gap
+            # 30-min break
+            start30 = giver_time[giver]
+            end30 = start30 + break30
+            if end30 > shift_end:
+                end30 = shift_end
+                start30 = end30 - break30
+            schedule.append([emp, giver, "30 min", start30.strftime("%H:%M"), end30.strftime("%H:%M"), ""])
+            giver_time[giver] = end30 + stagger_gap
 
         df = pd.DataFrame(schedule, columns=["Employee", "Break Giver", "Break Type", "Start", "End", "SA Initial"])
 
+        # --- Initialize session_state for persistence ---
+        if "edited_tables" not in st.session_state:
+            st.session_state.edited_tables = {giver: df[df["Break Giver"]==giver].reset_index(drop=True) for giver in givers}
+
         st.subheader("📅 Editable Schedule Per Break Giver")
-        edited_tables = {}
+
+        # --- Display editable tables ---
         for giver in givers:
             st.markdown(f"### 🧑‍🤝‍🧑 Schedule for {giver}")
-            giver_df = df[df["Break Giver"]==giver].reset_index(drop=True)
-            edited_df = st.data_editor(giver_df, num_rows="dynamic", use_container_width=True)
-            edited_tables[giver] = edited_df
+            edited_df = st.data_editor(
+                st.session_state.edited_tables[giver],
+                num_rows="dynamic",
+                use_container_width=True
+            )
+            st.session_state.edited_tables[giver] = edited_df
 
-        final_df = pd.concat(edited_tables.values(), ignore_index=True)
+        # --- Combine tables for final processing ---
+        final_df = pd.concat(st.session_state.edited_tables.values(), ignore_index=True)
 
-        # --- Checker: verify each employee has both breaks ---
+        # --- Checker ---
         warning_employees = []
         for emp in employees:
             emp_breaks = final_df[final_df["Employee"]==emp]["Break Type"].tolist()
@@ -97,17 +108,22 @@ if generate and employees and givers:
         else:
             st.success("✅ All employees have both 15-min and 30-min breaks assigned.")
 
-        # --- Download ---
+        # --- Download buttons ---
         st.subheader("⬇️ Download Schedule")
         csv = final_df.to_csv(index=False).encode("utf-8")
         st.download_button("Download CSV", csv, "break_schedule.csv", "text/csv")
 
         buffer = BytesIO()
         with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-            for giver, g_df in edited_tables.items():
+            for giver, g_df in st.session_state.edited_tables.items():
                 g_df.to_excel(writer, index=False, sheet_name=giver[:31])
-        st.download_button("Download Excel (per giver)", buffer, "break_schedule.xlsx",
-                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        st.download_button(
+            "Download Excel (per giver)",
+            buffer,
+            "break_schedule.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
 
     except Exception as e:
         st.error(f"⚠️ {e}")
+
