@@ -114,14 +114,18 @@ for giver in givers:
         f"Start: {giver_shift_times[giver][0]} | End: {giver_shift_times[giver][1]}**"
     )
 
+    # Drop "Break Giver" column for display/editing
+    display_df = df.drop(columns=["Break Giver"], errors="ignore")
+
     edited_df = st.data_editor(
-        df,
+        display_df,
         key=f"editor_{giver}",
         num_rows="dynamic",
         use_container_width=True
     )
 
-    # Save edits back
+    # Save edits back to session_state with "Break Giver" preserved internally
+    edited_df["Break Giver"] = giver
     st.session_state[f"table_{giver}"] = edited_df
 
 # --- Excel export ---
