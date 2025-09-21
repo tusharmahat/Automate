@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from io import BytesIO
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+from openpyxl.utils.dataframe import dataframe_to_rows
 
 # --- Page setup ---
 st.set_page_config(page_title="Break Scheduler", layout="wide")
@@ -13,7 +14,7 @@ st.title("☕ Break Scheduler with Checker")
 break15 = timedelta(minutes=15)
 break30 = timedelta(minutes=30)
 first_break_after = timedelta(hours=2)
-stagger_gap = timedelta(minutes=0)  # gap between breaks for the same giver
+stagger_gap = timedelta(minutes=0)
 
 # --- Inputs ---
 st.subheader("👨‍💼 Break Giver(s)")
@@ -22,36 +23,39 @@ givers = [g.strip() for g in givers_input.split(",") if g.strip()]
 
 st.subheader("👥 Employees per Break Giver")
 giver_employees = {}
+giver_shift_times = {}
 for giver in givers:
     emp_input = st.text_area(f"Enter employees for {giver} (comma-separated)", "")
     emp_list = [e.strip() for e in emp_input.split(",") if e.strip()]
     giver_employees[giver] = emp_list
-
-col1, col2 = st.columns(2)
-with col1:
-    shift_start_str = st.text_input("Shift Start (HH:MM)", "09:00")
-with col2:
-    shift_end_str = st.text_input("Shift End (HH:MM)", "17:00")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        start_str = st.text_input(f"{giver} Shift Start (HH:MM)", "09:00")
+    with col2:
+        end_str = st.text_input(f"{giver} Shift End (HH:MM)", "17:00")
+    giver_shift_times[giver] = (start_str, end_str)
 
 generate = st.button("Generate Schedule")
 
 # --- Generate schedule ---
 if generate:
     try:
-        shift_start = datetime.strptime(shift_start_str, "%H:%M")
-        shift_end = datetime.strptime(shift_end_str, "%H:%M")
         today_str = datetime.today().strftime("%Y-%m-%d")
-
         schedule_tables = {}
+
         for giver in givers:
             emp_list = giver_employees[giver]
             if not emp_list:
                 continue
 
+            shift_start = datetime.strptime(giver_shift_times[giver][0], "%H:%M")
+            shift_end = datetime.strptime(giver_shift_times[giver][1], "%H:%M")
             giver_time = {emp: shift_start + first_break_after for emp in emp_list}
+
             schedule = []
 
-            # --- Step 1: 15-min breaks for all except last employee ---
+            # --- 15-min breaks for all except last ---
             for emp in emp_list[:-1]:
                 start = giver_time[emp]
                 end = start + break15
@@ -65,7 +69,7 @@ if generate:
             schedule.append([last_emp, giver, "30 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
             giver_time[last_emp] = end + stagger_gap
 
-            # --- Step 2: 30-min breaks for others ---
+            # --- 30-min breaks for others ---
             for emp in emp_list[:-1]:
                 start = giver_time[emp]
                 end = start + break30
@@ -80,11 +84,11 @@ if generate:
             df = pd.DataFrame(schedule, columns=["Employee", "Break Giver", "Break Type", "Start", "End", "SA Initial"])
             schedule_tables[giver] = df
 
-        # --- Streamlit tables with titles ---
+        # --- Streamlit tables ---
         st.subheader("📅 Editable Schedule Per Break Giver")
         edited_tables = {}
         for giver, df in schedule_tables.items():
-            st.markdown(f"**Breaker: {giver} | Date: {today_str} | Start time: {shift_start_str}**")
+            st.markdown(f"**Breaker: {giver} | Date: {today_str} | Start: {giver_shift_times[giver][0]} | End: {giver_shift_times[giver][1]}**")
             edited_df = st.data_editor(df.drop(columns="Break Giver"), num_rows="dynamic", use_container_width=True, key=f"editor_{giver}")
             edited_tables[giver] = edited_df
 
@@ -96,8 +100,7 @@ if generate:
         ws.title = "Schedule"
 
         for giver, df in edited_tables.items():
-            # Title row
-            ws.append([f"Breaker: {giver} | Date: {today_str} | Start time: {shift_start_str}"])
+            ws.append([f"Breaker: {giver} | Date: {today_str} | Start: {giver_shift_times[giver][0]} | End: {giver_shift_times[giver][1]}"])
             title_row = ws.max_row
             ws.merge_cells(start_row=title_row, start_column=1, end_row=title_row, end_column=df.shape[1])
             cell = ws.cell(row=title_row, column=1)
@@ -120,7 +123,7 @@ if generate:
             for r in dataframe_to_rows(df, index=False, header=False):
                 ws.append(r)
 
-            ws.append([])  # blank row between tables
+            ws.append([])
 
         wb.save(buffer)
         st.download_button("Download Excel", buffer, "break_schedule.xlsx",
