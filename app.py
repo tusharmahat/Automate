@@ -6,10 +6,9 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils.dataframe import dataframe_to_rows
 from openpyxl.cell.cell import MergedCell
-import math
 
 # --- Page setup ---
-st.set_page_config(page_title="Break Scheduler", layout="wide")
+st.set_page_config(page_title="Break Scheduler with Checker", layout="wide")
 st.title("☕ Break Scheduler with Checker")
 
 # --- Settings ---
@@ -18,24 +17,19 @@ break30 = timedelta(minutes=30)
 
 # --- Inputs ---
 st.subheader("👨‍💼 Break Giver(s)")
-givers_input = st.text_input("Enter break giver names (comma-separated)", "Giver1, Giver2")
+givers_input = st.text_input("Enter break giver names (comma-separated)", "Giver1, Giver2, Giver3")
 givers = [g.strip() for g in givers_input.split(",") if g.strip()]
 
 st.subheader("👥 Employees")
-employees_input = st.text_area("Enter all employees (comma-separated)", "Alice, Bob, Carol, Dave")
+employees_input = st.text_area("Enter all employees (comma-separated)", "Alice, Bob, Carol, Dave, Eve, Frank, Grace")
 employees = [e.strip() for e in employees_input.split(",") if e.strip()]
 
-# Number of employees per giver
-st.subheader("Assign Employees per Break Giver")
-emp_counts = {}
-for giver in givers:
-    emp_counts[giver] = st.number_input(f"Number of employees for {giver}", min_value=1, max_value=len(employees), value=math.ceil(len(employees)/len(givers)), step=1)
-
-# Schedule date
+# --- Schedule date ---
 schedule_date = st.date_input("📅 Select Schedule Date", datetime.today())
 
-# Shift input per giver
+# --- Shift input per giver ---
 giver_shift_times = {}
+giver_employee_count = {}
 for giver in givers:
     col1, col2 = st.columns(2)
     with col1:
@@ -44,65 +38,62 @@ for giver in givers:
         end_time = st.time_input(f"{giver} Shift End", datetime.strptime("17:00", "%H:%M").time())
     giver_shift_times[giver] = (start_time, end_time)
 
+    # Input number of employees to assign
+    count = st.number_input(f"How many employees {giver} will cover?", min_value=1, max_value=len(employees), value=2, step=1)
+    giver_employee_count[giver] = count
+
 generate = st.button("Generate Schedule")
 
 if generate:
     try:
-        # Distribute employees to each giver based on input
-        distributed = {}
-        emp_index = 0
-        for giver in givers:
-            count = emp_counts[giver]
-            distributed[giver] = employees[emp_index:emp_index+count]
-            emp_index += count
-
+        remaining_employees = employees.copy()
         schedule_tables = {}
 
         for giver in givers:
-            emp_list = distributed[giver]
-            if not emp_list:
-                continue
+            table_key = f"table_{giver}"
+            if not remaining_employees:
+                break
+
+            num_to_assign = min(giver_employee_count[giver], len(remaining_employees))
+            emp_list = remaining_employees[:num_to_assign]
+            remaining_employees = remaining_employees[num_to_assign:]
 
             shift_start = datetime.combine(schedule_date, giver_shift_times[giver][0])
             shift_end = datetime.combine(schedule_date, giver_shift_times[giver][1])
 
+            giver_break_time = shift_start + (shift_end - shift_start) / 2
+
             schedule = []
             current_time = shift_start
 
-            # --- 15-min breaks for all employees ---
-            for emp in emp_list:
-                start = current_time
-                end = start + break15
-                schedule.append([emp, "15 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
-                current_time = end
+            # First 15-min breaks for all except last
+            for emp in emp_list[:-1]:
+                schedule.append([emp, "15 min", current_time.strftime("%H:%M"), (current_time + break15).strftime("%H:%M"), ""])
+                current_time += break15
 
-                # Insert break giver 30-min in the middle of first half
-                if emp == emp_list[len(emp_list)//2 - 1]:
-                    bg_start = current_time
-                    bg_end = bg_start + break30
-                    schedule.append([giver, "30 min (Giver)", bg_start.strftime("%H:%M"), bg_end.strftime("%H:%M"), ""])
-                    current_time = bg_end
+            # Giver 30-min break in middle
+            schedule.append([giver, "30 min (Giver)", giver_break_time.strftime("%H:%M"), (giver_break_time + break30).strftime("%H:%M"), ""])
 
-            # --- 30-min breaks for all employees ---
+            # Last employee 15-min
+            last_emp = emp_list[-1]
+            schedule.append([last_emp, "15 min", current_time.strftime("%H:%M"), (current_time + break15).strftime("%H:%M"), ""])
+            current_time += break15
+
+            # 30-min breaks for all employees
             for emp in emp_list:
-                start = current_time
-                end = start + break30
-                schedule.append([emp, "30 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
-                current_time = end
+                schedule.append([emp, "30 min", current_time.strftime("%H:%M"), (current_time + break30).strftime("%H:%M"), ""])
+                current_time += break30
 
             # Calculate total time
-            total_start = datetime.strptime(schedule[0][2], "%H:%M")
-            total_end = datetime.strptime(schedule[-1][3], "%H:%M")
-            total_duration = total_end - total_start
-            schedule.append(["", "Total Time", total_start.strftime("%H:%M"), total_end.strftime("%H:%M"), str(total_duration)])
+            total_start = datetime.combine(schedule_date, giver_shift_times[giver][0])
+            total_end = current_time
+            schedule.append(["", "Total Time", total_start.strftime("%H:%M"), total_end.strftime("%H:%M"), str(total_end - total_start)])
 
             df = pd.DataFrame(schedule, columns=["Employee", "Break Type", "Start", "End", "SA Initial"])
+            st.session_state[table_key] = df
             schedule_tables[giver] = df
-            st.session_state[f"table_{giver}"] = df
 
-        st.success("✅ Schedule generated successfully!")
-
-        # --- Editable tables ---
+        # --- Display tables ---
         st.subheader("📅 Editable Schedule Per Break Giver")
         for giver in givers:
             df = st.session_state.get(f"table_{giver}", pd.DataFrame())
@@ -110,13 +101,7 @@ if generate:
                 continue
 
             st.markdown(f"**Breaker: {giver} | Date: {schedule_date} | Start: {giver_shift_times[giver][0]} | End: {giver_shift_times[giver][1]}**")
-
-            edited_df = st.data_editor(
-                df,
-                num_rows="dynamic",
-                use_container_width=True,
-                key=f"editor_{giver}"
-            )
+            edited_df = st.data_editor(df, num_rows="dynamic", use_container_width=True, key=f"editor_{giver}")
             st.session_state[f"table_{giver}"] = edited_df
 
         # --- Excel export ---
@@ -126,12 +111,9 @@ if generate:
         ws = wb.active
         ws.title = "Schedule"
 
-        for giver in givers:
-            df = st.session_state.get(f"table_{giver}", pd.DataFrame())
+        for giver, df in schedule_tables.items():
             if df.empty:
                 continue
-
-            # Table title
             ws.append([f"Breaker: {giver} | Date: {schedule_date} | Start: {giver_shift_times[giver][0]} | End: {giver_shift_times[giver][1]}"])
             title_row = ws.max_row
             ws.merge_cells(start_row=title_row, start_column=1, end_row=title_row, end_column=df.shape[1])
@@ -151,7 +133,6 @@ if generate:
                 thin = Side(border_style="thin", color="000000")
                 c.border = Border(top=thin, left=thin, right=thin, bottom=thin)
 
-            # Data
             for r in dataframe_to_rows(df, index=False, header=False):
                 ws.append(r)
             ws.append([])
