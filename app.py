@@ -9,7 +9,7 @@ from openpyxl.cell.cell import MergedCell
 
 # --- Page setup ---
 st.set_page_config(page_title="Break Scheduler with Checker", layout="wide")
-st.title("☕ Break Scheduler with Checker")
+st.title("☕ Break Scheduler with Giver Self-Break Pause")
 
 # --- Settings ---
 break15 = timedelta(minutes=15)
@@ -17,11 +17,11 @@ break30 = timedelta(minutes=30)
 
 # --- Inputs ---
 st.subheader("👨‍💼 Break Giver(s)")
-givers_input = st.text_input("Enter break giver names (comma-separated)", "Giver1, Giver2, Giver3")
+givers_input = st.text_input("Enter break giver names (comma-separated)", "Giver1, Giver2")
 givers = [g.strip() for g in givers_input.split(",") if g.strip()]
 
 st.subheader("👥 Employees")
-employees_input = st.text_area("Enter all employees (comma-separated)", "Alice, Bob, Carol, Dave, Eve, Frank, Grace")
+employees_input = st.text_area("Enter all employees (comma-separated)", "Alice, Bob, Carol, Dave, Eve, Frank")
 employees = [e.strip() for e in employees_input.split(",") if e.strip()]
 
 # --- Schedule date ---
@@ -61,31 +61,40 @@ if generate:
             shift_start = datetime.combine(schedule_date, giver_shift_times[giver][0])
             shift_end = datetime.combine(schedule_date, giver_shift_times[giver][1])
 
+            # Giver self-break in the middle of their shift
             giver_break_time = shift_start + (shift_end - shift_start) / 2
 
             schedule = []
             current_time = shift_start
 
-            # First 15-min breaks for all except last
-            for emp in emp_list[:-1]:
+            # Loop over employees and assign breaks sequentially
+            i = 0
+            while i < len(emp_list):
+                emp = emp_list[i]
+
+                # If giver break overlaps, pause employee breaks
+                if current_time >= giver_break_time and current_time < (giver_break_time + break30):
+                    schedule.append([giver, "30 min (Giver)", current_time.strftime("%H:%M"), (current_time + break30).strftime("%H:%M"), ""])
+                    current_time += break30
+                    # don't increment i; keep current employee next
+                    continue
+
+                # Assign 15-min break
                 schedule.append([emp, "15 min", current_time.strftime("%H:%M"), (current_time + break15).strftime("%H:%M"), ""])
                 current_time += break15
+                i += 1
 
-            # Giver 30-min break in middle
-            schedule.append([giver, "30 min (Giver)", giver_break_time.strftime("%H:%M"), (giver_break_time + break30).strftime("%H:%M"), ""])
-
-            # Last employee 15-min
-            last_emp = emp_list[-1]
-            schedule.append([last_emp, "15 min", current_time.strftime("%H:%M"), (current_time + break15).strftime("%H:%M"), ""])
-            current_time += break15
-
-            # 30-min breaks for all employees
+            # Assign 30-min breaks for all employees sequentially after 15-mins
             for emp in emp_list:
+                # Pause if giver break overlaps
+                if current_time >= giver_break_time and current_time < (giver_break_time + break30):
+                    schedule.append([giver, "30 min (Giver)", current_time.strftime("%H:%M"), (current_time + break30).strftime("%H:%M"), ""])
+                    current_time += break30
                 schedule.append([emp, "30 min", current_time.strftime("%H:%M"), (current_time + break30).strftime("%H:%M"), ""])
                 current_time += break30
 
             # Calculate total time
-            total_start = datetime.combine(schedule_date, giver_shift_times[giver][0])
+            total_start = shift_start
             total_end = current_time
             schedule.append(["", "Total Time", total_start.strftime("%H:%M"), total_end.strftime("%H:%M"), str(total_end - total_start)])
 
@@ -122,7 +131,6 @@ if generate:
             cell.fill = PatternFill("solid", fgColor="4F81BD")
             cell.alignment = Alignment(horizontal="center")
 
-            # Header
             ws.append(df.columns.tolist())
             header_row = ws.max_row
             for col_num, _ in enumerate(df.columns, 1):
