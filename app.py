@@ -1,177 +1,96 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
-from io import BytesIO
-from openpyxl import Workbook
-from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
-from openpyxl.utils.dataframe import dataframe_to_rows
-from openpyxl.cell.cell import MergedCell
-import math
 
-# --- Page setup ---
 st.set_page_config(page_title="Break Scheduler", layout="wide")
-st.title("☕ Break Scheduler with Checker")
+st.title("☕ Employee Break Scheduler")
 
-# --- Settings ---
+# --- Parameters (editable in sidebar) ---
+st.sidebar.header("⚙️ Settings")
 break15 = timedelta(minutes=15)
 break30 = timedelta(minutes=30)
-first_break_after = timedelta(hours=2)
-stagger_gap = timedelta(minutes=0)
+min_gap = timedelta(hours=2)  # minimum time gap between 30 and 15
+stagger_gap = timedelta(minutes=15)  # stagger each employee
+first_break_after = timedelta(hours=2)  # no break before this
 
-# --- Inputs ---
-st.subheader("👨‍💼 Break Giver(s)")
-givers_input = st.text_input("Enter break giver names (comma-separated)", "Giver1, Giver2")
-givers = [g.strip() for g in givers_input.split(",") if g.strip()]
+# --- Upload input file ---
+st.subheader("📤 Upload Employee Shift File")
+st.markdown("File must have columns: **Employee | Shift Start | Shift End** (time as HH:MM)")
 
-st.subheader("👥 Employees")
-employees_input = st.text_area("Enter all employees (comma-separated)", "Alice, Bob, Carol, Dave")
-employees = [e.strip() for e in employees_input.split(",") if e.strip()]
+uploaded_file = st.file_uploader("Upload Excel or CSV", type=["xlsx", "csv"])
 
-# --- Schedule date ---
-schedule_date = st.date_input("📅 Select Schedule Date", datetime.today())
+if uploaded_file:
+    # Read file
+    if uploaded_file.name.endswith(".csv"):
+        employees_df = pd.read_csv(uploaded_file)
+    else:
+        employees_df = pd.read_excel(uploaded_file)
 
-# --- Shift input per giver ---
-giver_shift_times = {}
-for giver in givers:
-    col1, col2 = st.columns(2)
-    with col1:
-        start_str = st.time_input(f"{giver} Shift Start", datetime.strptime("09:00", "%H:%M").time())
-    with col2:
-        end_str = st.time_input(f"{giver} Shift End", datetime.strptime("17:00", "%H:%M").time())
-    giver_shift_times[giver] = (start_str, end_str)
+    st.write("👥 Employee Shifts")
+    st.dataframe(employees_df)
 
-generate = st.button("Generate Schedule")
+    # --- Break givers & assignment ---
+    st.subheader("👨‍💼 Assign Employees to Break Givers")
 
-if generate:
-    try:
-        # --- Distribute employees evenly to givers ---
-        distributed = {g: [] for g in givers}
-        for i, emp in enumerate(employees):
-            giver = givers[i % len(givers)]
-            distributed[giver].append(emp)
+    givers_input = st.text_input("Enter break giver names (comma-separated)", "Giver1, Giver2")
+    givers = [g.strip() for g in givers_input.split(",") if g.strip()]
 
-        # --- Generate breaks for each giver ---
-        for giver in givers:
-            table_key = f"table_{giver}"
-            emp_list = distributed[giver]
-            if not emp_list:
-                continue
+    giver_counts = {}
+    total_emps = len(employees_df)
 
-            shift_start = datetime.combine(schedule_date, giver_shift_times[giver][0])
-            shift_end = datetime.combine(schedule_date, giver_shift_times[giver][1])
-            giver_time = {emp: shift_start + first_break_after for emp in emp_list}
+    if givers:
+        st.markdown(f"Total employees: **{total_emps}**")
+        cols = st.columns(len(givers))
+        for idx, g in enumerate(givers):
+            with cols[idx]:
+                giver_counts[g] = st.number_input(
+                    f"Employees for {g}",
+                    min_value=0,
+                    max_value=total_emps,
+                    value=0,
+                    step=1
+                )
 
+    if st.button("Generate Schedule"):
+        if sum(giver_counts.values()) != total_emps:
+            st.error("⚠️ The total assigned employees must equal the total employees in the file.")
+        else:
             schedule = []
+            emp_index = 0
 
-            # --- 15-min breaks for all except last ---
-            for emp in emp_list[:-1]:
-                start = giver_time[emp]
-                end = start + break15
-                schedule.append([emp, "15 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
-                giver_time[emp] = end + stagger_gap
+            for giver in givers:
+                count = giver_counts[giver]
+                assigned_emps = employees_df.iloc[emp_index:emp_index+count]
+                emp_index += count
 
-            # --- Last employee 30-min first ---
-            last_emp = emp_list[-1]
-            start = giver_time[last_emp]
-            end = start + break30
-            schedule.append([last_emp, "30 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
-            giver_time[last_emp] = end + stagger_gap
+                for i, row in assigned_emps.iterrows():
+                    emp = row["Employee"]
+                    shift_start = datetime.strptime(str(row["Shift Start"]), "%H:%M")
+                    shift_end = datetime.strptime(str(row["Shift End"]), "%H:%M")
 
-            # --- 30-min breaks for others ---
-            for emp in emp_list[:-1]:
-                start = giver_time[emp]
-                end = start + break30
-                schedule.append([emp, "30 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
-                giver_time[emp] = end + stagger_gap
+                    # --- 30 min break ---
+                    start30 = shift_start + first_break_after + (i * stagger_gap)
+                    end30 = start30 + break30
 
-            # --- Last employee 15-min ---
-            start = giver_time[last_emp]
-            end = start + break15
-            schedule.append([last_emp, "15 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
+                    # --- 15 min break ---
+                    start15 = start30 + min_gap
+                    if start15 + break15 > shift_end:  # if not enough time left
+                        start15 = shift_end - break15
+                    end15 = start15 + break15
 
-            df = pd.DataFrame(schedule, columns=["Employee", "Break Type", "Start", "End", "SA Initial"])
+                    schedule.append([emp, giver, "30 min", start30.strftime("%H:%M"), end30.strftime("%H:%M")])
+                    schedule.append([emp, giver, "15 min", start15.strftime("%H:%M"), end15.strftime("%H:%M")])
 
-            # Save to session_state for persistence
-            st.session_state[table_key] = df
+            df = pd.DataFrame(schedule, columns=["Employee", "Break Giver", "Break Type", "Start", "End"])
 
-        st.success("✅ Schedule generated successfully!")
+            st.subheader("📅 Generated Break Schedule")
+            st.dataframe(df, use_container_width=True)
 
-    except Exception as e:
-        st.error(f"⚠️ {e}")
+            # --- Download buttons ---
+            csv = df.to_csv(index=False).encode("utf-8")
+            st.download_button("⬇️ Download as CSV", csv, "break_schedule.csv", "text/csv")
 
-# --- Display editable tables ---
-st.subheader("📅 Editable Schedule Per Break Giver")
-for giver in givers:
-    table_key = f"table_{giver}"
-    df = st.session_state.get(table_key, pd.DataFrame())
-    if df.empty:
-        continue
-
-    st.markdown(f"**Breaker: {giver} | Date: {schedule_date} | Start: {giver_shift_times[giver][0]} | End: {giver_shift_times[giver][1]}**")
-
-    edited_df = st.data_editor(
-        df,
-        num_rows="dynamic",  # allows adding new rows
-        use_container_width=True,
-        key=f"editor_{giver}"
-    )
-
-    # Save edits back to session_state so new rows are kept
-    st.session_state[table_key] = edited_df
-
-# --- Excel export ---
-st.subheader("⬇️ Download Schedule")
-buffer = BytesIO()
-wb = Workbook()
-ws = wb.active
-ws.title = "Schedule"
-
-for giver in givers:
-    df = st.session_state.get(f"table_{giver}", pd.DataFrame())
-    if df.empty:
-        continue
-
-    # Table title
-    ws.append([f"Breaker: {giver} | Date: {schedule_date} | Start: {giver_shift_times[giver][0]} | End: {giver_shift_times[giver][1]}"])
-    title_row = ws.max_row
-    ws.merge_cells(start_row=title_row, start_column=1, end_row=title_row, end_column=df.shape[1])
-    cell = ws.cell(row=title_row, column=1)
-    cell.font = Font(bold=True, color="FFFFFF")
-    cell.fill = PatternFill("solid", fgColor="4F81BD")
-    cell.alignment = Alignment(horizontal="center")
-
-    # Header
-    ws.append(df.columns.tolist())
-    header_row = ws.max_row
-    for col_num, _ in enumerate(df.columns, 1):
-        c = ws.cell(row=header_row, column=col_num)
-        c.font = Font(bold=True)
-        c.fill = PatternFill("solid", fgColor="D9E1F2")
-        c.alignment = Alignment(horizontal="center")
-        thin = Side(border_style="thin", color="000000")
-        c.border = Border(top=thin, left=thin, right=thin, bottom=thin)
-
-    # Data
-    for r in dataframe_to_rows(df, index=False, header=False):
-        ws.append(r)
-    ws.append([])
-
-# --- Adjust column widths ---
-for ws in wb.worksheets:
-    for col_cells in ws.columns:
-        max_length = 0
-        col_letter = None
-        for cell in col_cells:
-            if not isinstance(cell, MergedCell):
-                col_letter = cell.column_letter
-                break
-        if not col_letter:
-            continue
-        for cell in col_cells:
-            if cell.value and not isinstance(cell, MergedCell):
-                max_length = max(max_length, len(str(cell.value)))
-        ws.column_dimensions[col_letter].width = max_length + 2
-
-wb.save(buffer)
-st.download_button("Download Excel", buffer, "break_schedule.xlsx",
-                   mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            xlsx_file = "break_schedule.xlsx"
+            df.to_excel(xlsx_file, index=False)
+            with open(xlsx_file, "rb") as f:
+                st.download_button("⬇️ Download as Excel", f, "break_schedule.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
