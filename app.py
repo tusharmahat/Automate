@@ -74,40 +74,44 @@ if generate:
         A_queue = A_queue[num_A:]
         B_queue = B_queue[num_B:]
 
-        assigned_employees = assigned_A + assigned_B
         schedule = []
         current_time = datetime.combine(schedule_date, giver_shift_times[giver][0])
 
-        # --- A-shift 15-min breaks ---
+        # --- A-Shift 15-min breaks ---
         for emp in assigned_A:
             start = current_time
             end = start + break15
             schedule.append([emp, "15 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
             current_time = end + stagger_gap
 
-        # --- Break giver self-break in middle of A-shift ---
-        if len(schedule) > 0:
-            mid_index = len(schedule) // 2
-            mid_start = datetime.strptime(schedule[mid_index][2], "%H:%M")
-            mid_end = mid_start + break30
-            schedule.insert(mid_index, [giver, f"30 min (Giver)", mid_start.strftime("%H:%M"), mid_end.strftime("%H:%M"), ""])
-            current_time = max(current_time, mid_end + stagger_gap)
+        # --- Break giver self-break in sequence during A-shift 30-min ---
+        giver_break_start = current_time
+        giver_break_end = giver_break_start + break30
+        schedule.append([giver, "30 min (Giver)", giver_break_start.strftime("%H:%M"), giver_break_end.strftime("%H:%M"), ""])
+        current_time = giver_break_end + stagger_gap
 
-        # --- Wait for B-shift 1 hour after B shift start if necessary ---
+        # --- A-Shift 30-min breaks ---
+        for emp in assigned_A:
+            start = current_time
+            end = start + break30
+            schedule.append([emp, "30 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
+            current_time = end + stagger_gap
+
+        # --- Wait until B-shift +1 hour ---
         if assigned_B:
             B_shift_min_start = datetime.combine(schedule_date, B_shift_start_time) + timedelta(hours=1)
             if current_time < B_shift_min_start:
                 current_time = B_shift_min_start
 
-        # --- B-shift 15-min breaks ---
+        # --- B-Shift 15-min breaks ---
         for emp in assigned_B:
             start = current_time
             end = start + break15
             schedule.append([emp, "15 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
             current_time = end + stagger_gap
 
-        # --- 30-min breaks (all assigned employees) ---
-        for emp in assigned_employees:
+        # --- B-Shift 30-min breaks ---
+        for emp in assigned_B:
             start = current_time
             end = start + break30
             schedule.append([emp, "30 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
