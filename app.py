@@ -6,7 +6,6 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils.dataframe import dataframe_to_rows
 from openpyxl.cell.cell import MergedCell
-import math
 
 # --- Page setup ---
 st.set_page_config(page_title="Break Scheduler", layout="wide")
@@ -19,12 +18,12 @@ stagger_gap = timedelta(minutes=0)
 
 # --- Inputs ---
 st.subheader("👨‍💼 Break Giver(s)")
-givers_input = st.text_input("Enter break giver names (comma-separated)", "1,2,3,4")
+givers_input = st.text_input("Enter break giver names (comma-separated)", "Jamie,Ainura,Gurleen,X")
 givers = [g.strip() for g in givers_input.split(",") if g.strip()]
 
 st.subheader("👥 Employees")
-shift_A_input = st.text_area("Shift A Employees (comma-separated)", "1,2,3,4,5,6,7,8")
-shift_B_input = st.text_area("Shift B Employees (comma-separated)", "1b,2b,3b,4b,5b,6b,7b,8b")
+shift_A_input = st.text_area("Shift A Employees (comma-separated)", "Farshid,Caroll,Darin,Lisseth,Matthew,Muriel,Rogi,Zashmin")
+shift_B_input = st.text_area("Shift B Employees (comma-separated)", "Sherry,Caroline,Julia,Kyle,Gurleen,Marie,Rabina,Rose")
 shift_employees = {
     "A": [e.strip() for e in shift_A_input.split(",") if e.strip()],
     "B": [e.strip() for e in shift_B_input.split(",") if e.strip()]
@@ -61,73 +60,67 @@ generate = st.button("Generate Schedule")
 
 if generate:
     st.session_state['tables'] = {}
+
+    # --- Prepare queues ---
     A_queue = shift_employees["A"].copy()
     B_queue = shift_employees["B"].copy()
 
+    # --- Initialize breaker counters ---
+    breaker_counter = {giver: 0 for giver in givers}
+
+    # --- Function to get next available breaker ---
+    def get_next_breaker():
+        for giver in givers:
+            if breaker_counter[giver] < giver_max_breaks[giver]:
+                return giver
+        return None
+
+    # --- Combine A then B queue with B-shift time adjustment ---
+    combined_queue = []
+    for emp in A_queue:
+        combined_queue.append(("A", emp))
+    for emp in B_queue:
+        combined_queue.append(("B", emp))
+
+    # --- Schedule generation ---
+    schedules = {giver: [] for giver in givers}
+    current_times = {giver: datetime.combine(schedule_date, giver_shift_times[giver][0]) for giver in givers}
+
+    for shift_type, emp in combined_queue:
+        giver = get_next_breaker()
+        if giver is None:
+            st.warning(f"No more available breaks to assign for {emp}.")
+            continue
+
+        # Adjust B shift start
+        if shift_type == "B":
+            b_min_start = datetime.combine(schedule_date, B_shift_start_time) + timedelta(hours=1)
+            if current_times[giver] < b_min_start:
+                current_times[giver] = b_min_start
+
+        # Assign 15-min break
+        start = current_times[giver]
+        end = start + break15
+        schedules[giver].append([emp, "15 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
+        current_times[giver] = end + stagger_gap
+
+        breaker_counter[giver] += 1
+
+        # Insert self-break in middle of their assigned slots (once per giver)
+        if not any(b[1].startswith(f"{giver}") and "Giver" in b[1] for b in schedules[giver]):
+            mid_start = start
+            mid_end = mid_start + break30
+            schedules[giver].insert(len(schedules[giver])//2, [giver, "30 min (Giver)", mid_start.strftime("%H:%M"), mid_end.strftime("%H:%M"), ""])
+            current_times[giver] = max(current_times[giver], mid_end + stagger_gap)
+
+    # --- Convert to DataFrames ---
     for giver in givers:
-        max_breaks = giver_max_breaks[giver]
-        num_A = math.ceil(max_breaks / 2)
-        num_B = max_breaks - num_A
-
-        assigned_A = A_queue[:num_A]
-        assigned_B = []
-        for i in range(num_B):
-            if B_queue:
-                assigned_B.append(B_queue.pop(0))
-
-        A_queue = A_queue[num_A:]
-        B_queue = B_queue[num_B:]
-
-        schedule = []
-        current_time = datetime.combine(schedule_date, giver_shift_times[giver][0])
-
-        # --- A-Shift 15-min breaks ---
-        for emp in assigned_A:
-            start = current_time
-            end = start + break15
-            schedule.append([emp, "15 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
-            current_time = end + stagger_gap
-
-        # --- Break giver self-break in sequence during A-shift 30-min ---
-        giver_break_start = current_time
-        giver_break_end = giver_break_start + break30
-        schedule.append([giver, "30 min (Giver)", giver_break_start.strftime("%H:%M"), giver_break_end.strftime("%H:%M"), ""])
-        current_time = giver_break_end + stagger_gap
-
-        # --- A-Shift 30-min breaks ---
-        for emp in assigned_A:
-            start = current_time
-            end = start + break30
-            schedule.append([emp, "30 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
-            current_time = end + stagger_gap
-
-        # --- Wait until B-shift +1 hour ---
-        if assigned_B:
-            B_shift_min_start = datetime.combine(schedule_date, B_shift_start_time) + timedelta(hours=1)
-            if current_time < B_shift_min_start:
-                current_time = B_shift_min_start
-
-        # --- B-Shift 15-min breaks ---
-        for emp in assigned_B:
-            start = current_time
-            end = start + break15
-            schedule.append([emp, "15 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
-            current_time = end + stagger_gap
-
-        # --- B-Shift 30-min breaks ---
-        for emp in assigned_B:
-            start = current_time
-            end = start + break30
-            schedule.append([emp, "30 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
-            current_time = end + stagger_gap
-
-        # --- Total time ---
-        first_start = datetime.strptime(schedule[0][2], "%H:%M")
-        last_end = datetime.strptime(schedule[-1][3], "%H:%M")
-        total_time = last_end - first_start
-        schedule.append(["", "Total Time", first_start.strftime("%H:%M"), last_end.strftime("%H:%M"), str(total_time)])
-
-        df = pd.DataFrame(schedule, columns=["Employee", "Break Type", "Start", "End", "SA Initial"])
+        df = pd.DataFrame(schedules[giver], columns=["Employee", "Break Type", "Start", "End", "SA Initial"])
+        if not df.empty:
+            first_start = datetime.strptime(df.iloc[0]['Start'], "%H:%M")
+            last_end = datetime.strptime(df.iloc[-1]['End'], "%H:%M")
+            total_time = last_end - first_start
+            df.loc[len(df)] = ["", "Total Time", first_start.strftime("%H:%M"), last_end.strftime("%H:%M"), str(total_time)]
         st.session_state['tables'][giver] = df
 
     st.success("✅ Schedule generated successfully!")
