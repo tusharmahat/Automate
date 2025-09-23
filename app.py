@@ -169,7 +169,11 @@ if 'schedules' in st.session_state:
             c.border = Border(top=thin, left=thin, right=thin, bottom=thin)
 
         # Data without break giver column
-        for r in dataframe_to_rows(df.drop(columns=["Employee"] if "Employee" in df.columns else df, index=False, header=False)):
+        export_df = df.copy()
+        if "Employee" in export_df.columns:
+            export_df = export_df.drop(columns=["Employee"])
+
+        for r in dataframe_to_rows(export_df, index=False, header=False):
             ws.append(r)
         ws.append([])
 
