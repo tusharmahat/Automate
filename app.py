@@ -6,6 +6,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils.dataframe import dataframe_to_rows
 from openpyxl.cell.cell import MergedCell
+import math
 
 # --- Page setup ---
 st.set_page_config(page_title="Break Scheduler", layout="wide")
@@ -61,128 +62,77 @@ generate = st.button("Generate Schedule")
 if generate:
     st.session_state['tables'] = {}
 
-    # --- Prepare queues ---
     A_queue = shift_employees["A"].copy()
     B_queue = shift_employees["B"].copy()
 
-    # --- Initialize breaker counters ---
-    breaker_counter = {giver: 0 for giver in givers}
-
-    # --- Function to get next available breaker ---
-    def get_next_breaker():
-        for giver in givers:
-            if breaker_counter[giver] < giver_max_breaks[giver]:
-                return giver
-        return None
-
-    # --- Combine A then B queue with B-shift time adjustment ---
-    combined_queue = []
-    for emp in A_queue:
-        combined_queue.append(("A", emp))
-    for emp in B_queue:
-        combined_queue.append(("B", emp))
-
-    # --- Schedule generation ---
-    schedules = {giver: [] for giver in givers}
-    current_times = {giver: datetime.combine(schedule_date, giver_shift_times[giver][0]) for giver in givers}
-
-    for shift_type, emp in combined_queue:
-        giver = get_next_breaker()
-        if giver is None:
-            st.warning(f"No more available breaks to assign for {emp}.")
-            continue
-
-        # Adjust B shift start
-        if shift_type == "B":
-            b_min_start = datetime.combine(schedule_date, B_shift_start_time) + timedelta(hours=1)
-            if current_times[giver] < b_min_start:
-                current_times[giver] = b_min_start
-
-        # Assign 15-min break
-        start = current_times[giver]
-        end = start + break15
-        schedules[giver].append([emp, "15 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
-        current_times[giver] = end + stagger_gap
-
-        breaker_counter[giver] += 1
-
-        # Insert self-break in middle of their assigned slots (once per giver)
-        if not any(b[1].startswith(f"{giver}") and "Giver" in b[1] for b in schedules[giver]):
-            mid_start = start
-            mid_end = mid_start + break30
-            schedules[giver].insert(len(schedules[giver])//2, [giver, "30 min (Giver)", mid_start.strftime("%H:%M"), mid_end.strftime("%H:%M"), ""])
-            current_times[giver] = max(current_times[giver], mid_end + stagger_gap)
-
-    # --- Convert to DataFrames ---
+    # --- Split employees per breaker ---
+    breaker_assignments = {}
     for giver in givers:
-        df = pd.DataFrame(schedules[giver], columns=["Employee", "Break Type", "Start", "End", "SA Initial"])
-        if not df.empty:
-            first_start = datetime.strptime(df.iloc[0]['Start'], "%H:%M")
-            last_end = datetime.strptime(df.iloc[-1]['End'], "%H:%M")
+        max_breaks = giver_max_breaks[giver]
+        num_A = math.ceil(max_breaks / 2)
+        num_B = max_breaks - num_A
+        assigned_A = A_queue[:num_A]
+        assigned_B = B_queue[:num_B]
+        A_queue = A_queue[num_A:]
+        B_queue = B_queue[num_B:]
+        breaker_assignments[giver] = {"A": assigned_A, "B": assigned_B}
+
+    for giver in givers:
+        schedule = []
+        current_time = datetime.combine(schedule_date, giver_shift_times[giver][0])
+        assigned_A = breaker_assignments[giver]["A"]
+        assigned_B = breaker_assignments[giver]["B"]
+
+        # --- 15-min breaks for A ---
+        for emp in assigned_A:
+            start = current_time
+            end = start + break15
+            schedule.append([emp, "15 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
+            current_time = end + stagger_gap
+
+        # --- Insert Giver 30-min break in middle of A-shift ---
+        if assigned_A:
+            mid_index = len(schedule) // 2
+            mid_start = datetime.strptime(schedule[mid_index][2], "%H:%M")
+            mid_end = mid_start + break30
+            schedule.insert(mid_index, [giver, "30 min (Giver)", mid_start.strftime("%H:%M"), mid_end.strftime("%H:%M"), ""])
+            current_time = max(current_time, mid_end + stagger_gap)
+
+        # --- 30-min breaks for A-shift employees ---
+        for emp in assigned_A:
+            start = current_time
+            end = start + break30
+            schedule.append([emp, "30 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
+            current_time = end + stagger_gap
+
+        # --- Wait for B shift start + 1 hour ---
+        if assigned_B:
+            b_min_start = datetime.combine(schedule_date, B_shift_start_time) + timedelta(hours=1)
+            if current_time < b_min_start:
+                current_time = b_min_start
+
+        # --- 15-min breaks for B ---
+        for emp in assigned_B:
+            start = current_time
+            end = start + break15
+            schedule.append([emp, "15 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
+            current_time = end + stagger_gap
+
+        # --- 30-min breaks for B-shift employees ---
+        for emp in assigned_B:
+            start = current_time
+            end = start + break30
+            schedule.append([emp, "30 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
+            current_time = end + stagger_gap
+
+        # --- Total time ---
+        if schedule:
+            first_start = datetime.strptime(schedule[0][2], "%H:%M")
+            last_end = datetime.strptime(schedule[-1][3], "%H:%M")
             total_time = last_end - first_start
-            df.loc[len(df)] = ["", "Total Time", first_start.strftime("%H:%M"), last_end.strftime("%H:%M"), str(total_time)]
+            schedule.append(["", "Total Time", first_start.strftime("%H:%M"), last_end.strftime("%H:%M"), str(total_time)])
+
+        df = pd.DataFrame(schedule, columns=["Employee", "Break Type", "Start", "End", "SA Initial"])
         st.session_state['tables'][giver] = df
 
     st.success("✅ Schedule generated successfully!")
-
-# --- Display Editable Tables ---
-st.subheader("📅 Editable Schedule Per Break Giver")
-if 'tables' in st.session_state:
-    for giver, df in st.session_state['tables'].items():
-        st.markdown(f"**Breaker: {giver} | Date: {schedule_date} | Start: {giver_shift_times[giver][0]} | End: {giver_shift_times[giver][1]}**")
-        edited_df = st.data_editor(df, num_rows="dynamic", use_container_width=True, key=f"editor_{giver}")
-        st.session_state['tables'][giver] = edited_df
-
-# --- Excel Export ---
-st.subheader("⬇️ Download Schedule")
-buffer = BytesIO()
-wb = Workbook()
-ws = wb.active
-ws.title = "Schedule"
-
-if 'tables' in st.session_state:
-    for giver, df in st.session_state['tables'].items():
-        # Table title
-        ws.append([f"Breaker: {giver} | Date: {schedule_date} | Start: {giver_shift_times[giver][0]} | End: {giver_shift_times[giver][1]}"])
-        title_row = ws.max_row
-        ws.merge_cells(start_row=title_row, start_column=1, end_row=title_row, end_column=df.shape[1])
-        cell = ws.cell(row=title_row, column=1)
-        cell.font = Font(bold=True, color="FFFFFF")
-        cell.fill = PatternFill("solid", fgColor="4F81BD")
-        cell.alignment = Alignment(horizontal="center")
-
-        # Header
-        ws.append(df.columns.tolist())
-        header_row = ws.max_row
-        for col_num, _ in enumerate(df.columns, 1):
-            c = ws.cell(row=header_row, column=col_num)
-            c.font = Font(bold=True)
-            c.fill = PatternFill("solid", fgColor="D9E1F2")
-            c.alignment = Alignment(horizontal="center")
-            thin = Side(border_style="thin", color="000000")
-            c.border = Border(top=thin, left=thin, right=thin, bottom=thin)
-
-        # Data
-        for r in dataframe_to_rows(df, index=False, header=False):
-            ws.append(r)
-        ws.append([])
-
-# Adjust column widths
-for ws in wb.worksheets:
-    for col_cells in ws.columns:
-        max_length = 0
-        col_letter = None
-        for cell in col_cells:
-            if not isinstance(cell, MergedCell):
-                col_letter = cell.column_letter
-                break
-        if not col_letter:
-            continue
-        for cell in col_cells:
-            if cell.value and not isinstance(cell, MergedCell):
-                max_length = max(max_length, len(str(cell.value)))
-        ws.column_dimensions[col_letter].width = max_length + 2
-
-wb.save(buffer)
-st.download_button("Download Excel", buffer, "break_schedule.xlsx",
-                   mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
