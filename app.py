@@ -70,7 +70,11 @@ if generate:
         num_B = max_breaks - num_A
 
         assigned_A = A_queue[:num_A]
-        assigned_B = B_queue[:num_B]
+        assigned_B = []
+        for i in range(num_B):
+            if B_queue:
+                assigned_B.append(B_queue.pop(0))
+
         A_queue = A_queue[num_A:]
         B_queue = B_queue[num_B:]
 
