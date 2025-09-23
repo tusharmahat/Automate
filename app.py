@@ -66,19 +66,24 @@ if generate:
 
     for giver in givers:
         max_breaks = giver_max_breaks[giver]
-        num_A = math.ceil(max_breaks / 2)
-        num_B = max_breaks - num_A
+        # Distribute B-shift employees fairly across all breakers
+        # At the start, make a copy of B queue
+        B_queue_all = shift_employees["B"].copy()
+        
+        for giver in givers:
+            max_breaks = giver_max_breaks[giver]
+            
+            # Assign employees for A-shift
+            num_A = min(math.ceil(max_breaks / 2), len(A_queue))
+            assigned_A = A_queue[:num_A]
+            A_queue = A_queue[num_A:]
+            
+            # Assign employees for B-shift
+            # Take next available from full B queue
+            num_B = min(max_breaks - num_A, len(B_queue_all))
+            assigned_B = B_queue_all[:num_B]
+            B_queue_all = B_queue_all[num_B:]
 
-        # --- Assign employees from queues ---
-        assigned_A = A_queue[:num_A]
-        A_queue = A_queue[num_A:]  # remove assigned A employees
-
-        # Assign B-shift employees until the breaker reaches their max breaks
-        assigned_B = []
-        remaining_breaks = max_breaks - len(assigned_A)
-        while remaining_breaks > 0 and B_queue:
-            assigned_B.append(B_queue.pop(0))
-            remaining_breaks -= 1
 
 
         schedule = []
