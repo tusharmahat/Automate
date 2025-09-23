@@ -84,11 +84,12 @@ if generate:
             schedule.append([emp, "15 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
             current_time = end + stagger_gap
 
-        # --- Break giver self-break in sequence during A-shift 30-min ---
-        giver_break_start = current_time
-        giver_break_end = giver_break_start + break30
-        schedule.append([giver, "30 min (Giver)", giver_break_start.strftime("%H:%M"), giver_break_end.strftime("%H:%M"), ""])
-        current_time = giver_break_end + stagger_gap
+         # --- Break giver self-break only if max_breaks >= 4 ---
+        if max_breaks >= 4 and assigned_A:
+            giver_break_start = current_time
+            giver_break_end = giver_break_start + break30
+            schedule.append([giver, "30 min (Giver)", giver_break_start.strftime("%H:%M"), giver_break_end.strftime("%H:%M"), ""])
+            current_time = giver_break_end + stagger_gap
 
         # --- A-Shift 30-min breaks ---
         for emp in assigned_A:
