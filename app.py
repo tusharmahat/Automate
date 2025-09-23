@@ -73,10 +73,13 @@ if generate:
         assigned_A = A_queue[:num_A]
         A_queue = A_queue[num_A:]  # remove assigned A employees
 
+        # Assign B-shift employees until the breaker reaches their max breaks
         assigned_B = []
-        for _ in range(num_B):
-            if B_queue:
-                assigned_B.append(B_queue.pop(0))
+        remaining_breaks = max_breaks - len(assigned_A)
+        while remaining_breaks > 0 and B_queue:
+            assigned_B.append(B_queue.pop(0))
+            remaining_breaks -= 1
+
 
         schedule = []
         current_time = datetime.combine(schedule_date, giver_shift_times[giver][0])
