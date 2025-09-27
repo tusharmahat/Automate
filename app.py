@@ -118,57 +118,78 @@ if generate:
         break_type = giver_break_type[giver]
 
         # Assign employees
-        num_A = min(math.ceil(max_breaks / 2), len(A_queue))
-        assigned_A = A_queue[:num_A]
-        A_queue = A_queue[num_A:]
-
-        num_B = min(max_breaks - num_A, len(B_queue_all))
-        assigned_B = B_queue_all[:num_B]
-        B_queue_all = B_queue_all[num_B:]
-
+        assigned_A = A_queue.copy()
+        assigned_B = B_queue_all.copy()
         schedule = []
-        current_time = datetime.combine(schedule_date, giver_shift_times.get(giver, (datetime.strptime("09:00","%H:%M").time(), datetime.strptime("17:00","%H:%M").time()))[0])
+        current_time = datetime.combine(schedule_date, giver_shift_times[giver][0])
+        breaks_assigned = 0
 
-        # --- A-Shift breaks ---
-        if break_type in ["15 min only", "Both"]:
-            for emp in assigned_A:
+        # Helper function for round-robin
+        def get_next_employee(queue):
+            if not queue:
+                return None
+            emp = queue.pop(0)
+            queue.append(emp)
+            return emp
+
+        while breaks_assigned < max_breaks:
+            # A-shift 15 min
+            if break_type in ["15 min only", "Both"] and assigned_A:
+                emp = get_next_employee(assigned_A)
                 start = current_time
                 end = start + break15
                 schedule.append([emp, "15 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
                 current_time = end + stagger_gap
+                breaks_assigned += 1
+                if breaks_assigned >= max_breaks:
+                    break
 
-        if max_breaks >= 4 and assigned_A and break_type in ["30 min only", "Both"]:
-            giver_start = current_time
-            giver_end = giver_start + break30
-            schedule.append([giver, "30 min (Giver)", giver_start.strftime("%H:%M"), giver_end.strftime("%H:%M"), ""])
-            current_time = giver_end + stagger_gap
+            # Giver self-break (30 min)
+            if break_type in ["30 min only", "Both"] and breaks_assigned == 3 and max_breaks >= 4:
+                start = current_time
+                end = start + break30
+                schedule.append([giver, "30 min (Giver)", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
+                current_time = end + stagger_gap
+                breaks_assigned += 1
+                if breaks_assigned >= max_breaks:
+                    break
 
-        if break_type in ["30 min only", "Both"]:
-            for emp in assigned_A:
+            # A-shift 30 min
+            if break_type in ["30 min only", "Both"] and assigned_A:
+                emp = get_next_employee(assigned_A)
                 start = current_time
                 end = start + break30
                 schedule.append([emp, "30 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
                 current_time = end + stagger_gap
+                breaks_assigned += 1
+                if breaks_assigned >= max_breaks:
+                    break
 
-        # --- B-Shift breaks ---
-        if assigned_B:
-            B_shift_min_start = datetime.combine(schedule_date, B_shift_start_time) + timedelta(hours=1)
-            if current_time < B_shift_min_start:
-                current_time = B_shift_min_start
+            # B-shift
+            if assigned_B:
+                B_shift_min_start = datetime.combine(schedule_date, B_shift_start_time) + timedelta(hours=1)
+                if current_time < B_shift_min_start:
+                    current_time = B_shift_min_start
 
-        if break_type in ["15 min only", "Both"]:
-            for emp in assigned_B:
-                start = current_time
-                end = start + break15
-                schedule.append([emp, "15 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
-                current_time = end + stagger_gap
+                if break_type in ["15 min only", "Both"]:
+                    emp = get_next_employee(assigned_B)
+                    start = current_time
+                    end = start + break15
+                    schedule.append([emp, "15 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
+                    current_time = end + stagger_gap
+                    breaks_assigned += 1
+                    if breaks_assigned >= max_breaks:
+                        break
 
-        if break_type in ["30 min only", "Both"]:
-            for emp in assigned_B:
-                start = current_time
-                end = start + break30
-                schedule.append([emp, "30 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
-                current_time = end + stagger_gap
+                if break_type in ["30 min only", "Both"]:
+                    emp = get_next_employee(assigned_B)
+                    start = current_time
+                    end = start + break30
+                    schedule.append([emp, "30 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
+                    current_time = end + stagger_gap
+                    breaks_assigned += 1
+                    if breaks_assigned >= max_breaks:
+                        break
 
         # Total time
         if schedule:
@@ -286,4 +307,3 @@ st.download_button(
     file_name="break_schedule.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 )
-
