@@ -224,18 +224,21 @@ if 'tables' in st.session_state:
     counter_df = pd.DataFrame(counter_list, columns=["Employee", "Shift A Breaks", "Shift B Breaks"])
     st.dataframe(counter_df)
 
-# --- Excel Export ---
-st.subheader("⬇️ Download Schedule")
+# --- Excel Export (Single Sheet) ---
+st.subheader("⬇️ Download Schedule (Single Sheet)")
+
 buffer = BytesIO()
 wb = Workbook()
+ws = wb.active
+ws.title = "Schedule"
 
 if 'tables' in st.session_state:
     for giver, df in st.session_state['tables'].items():
-        ws = wb.create_sheet(title=f"{giver}_Schedule")
         start_time, end_time = giver_shift_times.get(
             giver, 
             (datetime.strptime("09:00","%H:%M").time(), datetime.strptime("17:00","%H:%M").time())
         )
+        # Table title
         ws.append([f"Breaker: {giver} | Date: {schedule_date} | Start: {start_time} | End: {end_time}"])
         title_row = ws.max_row
         ws.merge_cells(start_row=title_row, start_column=1, end_row=title_row, end_column=df.shape[1])
@@ -244,6 +247,7 @@ if 'tables' in st.session_state:
         cell.fill = PatternFill("solid", fgColor="4F81BD")
         cell.alignment = Alignment(horizontal="center")
 
+        # Header
         ws.append(df.columns.tolist())
         header_row = ws.max_row
         for col_num, _ in enumerate(df.columns, 1):
@@ -254,27 +258,26 @@ if 'tables' in st.session_state:
             thin = Side(border_style="thin", color="000000")
             c.border = Border(top=thin, left=thin, right=thin, bottom=thin)
 
+        # Data
         for r in dataframe_to_rows(df, index=False, header=False):
             ws.append(r)
-        ws.append([])
 
-if "Sheet" in wb.sheetnames and wb["Sheet"].max_row == 1:
-    wb.remove(wb["Sheet"])
+        ws.append([])  # Empty row between tables
 
-for ws in wb.worksheets:
-    for col_cells in ws.columns:
-        max_length = 0
-        col_letter = None
-        for cell in col_cells:
-            if not isinstance(cell, MergedCell):
-                col_letter = cell.column_letter
-                break
-        if not col_letter:
-            continue
-        for cell in col_cells:
-            if cell.value and not isinstance(cell, MergedCell):
-                max_length = max(max_length, len(str(cell.value)))
-        ws.column_dimensions[col_letter].width = max_length + 2
+# Adjust column widths
+for col_cells in ws.columns:
+    max_length = 0
+    col_letter = None
+    for cell in col_cells:
+        if not isinstance(cell, MergedCell):
+            col_letter = cell.column_letter
+            break
+    if not col_letter:
+        continue
+    for cell in col_cells:
+        if cell.value and not isinstance(cell, MergedCell):
+            max_length = max(max_length, len(str(cell.value)))
+    ws.column_dimensions[col_letter].width = max_length + 2
 
 wb.save(buffer)
 st.download_button(
@@ -283,3 +286,4 @@ st.download_button(
     file_name="break_schedule.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 )
+
