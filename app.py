@@ -91,7 +91,7 @@ if generate:
 
         # Build schedule
         schedule = []
-        current_time = datetime.combine(schedule_date, giver_shift_times[giver][0])
+        current_time = datetime.combine(schedule_date, giver_shift_times.get(giver, (datetime.strptime("09:00","%H:%M").time(), datetime.strptime("17:00","%H:%M").time()))[0])
 
         # A-Shift 15-min breaks
         for emp in assigned_A:
@@ -156,7 +156,12 @@ if generate:
 st.subheader("📅 Editable Schedule Per Break Giver")
 if 'tables' in st.session_state:
     for giver, df in st.session_state['tables'].items():
-        st.markdown(f"**Breaker: {giver} | Date: {schedule_date} | Start: {giver_shift_times[giver][0]} | End: {giver_shift_times[giver][1]}**")
+        # Safe lookup for shift times
+        start_time, end_time = giver_shift_times.get(
+            giver, 
+            (datetime.strptime("09:00","%H:%M").time(), datetime.strptime("17:00","%H:%M").time())
+        )
+        st.markdown(f"**Breaker: {giver} | Date: {schedule_date} | Start: {start_time} | End: {end_time}**")
         edited_df = st.data_editor(df, num_rows="dynamic", use_container_width=True, key=f"editor_{giver}")
         st.session_state['tables'][giver] = edited_df
 
@@ -174,8 +179,14 @@ if 'tables' in st.session_state:
     for giver, df in st.session_state['tables'].items():
         ws = wb.create_sheet(title=f"{giver}_Schedule")
 
+        # Safe lookup for shift times
+        start_time, end_time = giver_shift_times.get(
+            giver, 
+            (datetime.strptime("09:00","%H:%M").time(), datetime.strptime("17:00","%H:%M").time())
+        )
+
         # Title
-        ws.append([f"Breaker: {giver} | Date: {schedule_date} | Start: {giver_shift_times[giver][0]} | End: {giver_shift_times[giver][1]}"])
+        ws.append([f"Breaker: {giver} | Date: {schedule_date} | Start: {start_time} | End: {end_time}"])
         title_row = ws.max_row
         ws.merge_cells(start_row=title_row, start_column=1, end_row=title_row, end_column=df.shape[1])
         cell = ws.cell(row=title_row, column=1)
