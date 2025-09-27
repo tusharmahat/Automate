@@ -215,6 +215,23 @@ if 'tables' in st.session_state:
     with open(DATA_FILE, "w") as f:
         json.dump(to_save, f, indent=2)
 
+# --- Break Counter ---
+st.subheader("📝 Break Count Per Employee")
+if 'tables' in st.session_state:
+    all_rows = pd.concat(st.session_state['tables'].values(), ignore_index=True)
+    
+    shift_A_employees = shift_employees["A"]
+    shift_B_employees = shift_employees["B"]
+
+    counter_list = []
+    for emp in shift_A_employees + shift_B_employees:
+        count_A = len(all_rows[(all_rows["Employee"] == emp) & (all_rows["Employee"].isin(shift_A_employees))])
+        count_B = len(all_rows[(all_rows["Employee"] == emp) & (all_rows["Employee"].isin(shift_B_employees))])
+        counter_list.append([emp, count_A, count_B])
+    
+    counter_df = pd.DataFrame(counter_list, columns=["Employee", "Shift A Breaks", "Shift B Breaks"])
+    st.dataframe(counter_df)
+
 # --- Excel Export ---
 st.subheader("⬇️ Download Schedule")
 buffer = BytesIO()
