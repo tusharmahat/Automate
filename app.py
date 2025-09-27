@@ -6,7 +6,6 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils.dataframe import dataframe_to_rows
 from openpyxl.cell.cell import MergedCell
-import math
 import os
 import json
 
@@ -72,17 +71,12 @@ giver_break_type = {}
 cols = st.columns(len(givers))
 for i, giver in enumerate(givers):
     with cols[i]:
-        # Number of breaks
         default_val = giver_max_breaks_default.get(giver, 4)
         giver_max_breaks[giver] = st.number_input(f"Breaks for {giver}", min_value=1, max_value=20, value=default_val, step=1)
-        
-        # Break type
         giver_break_type[giver] = st.selectbox(
             f"Break Type for {giver}",
             options=["15 min only", "30 min only", "Both"],
-            index=["15 min only", "30 min only", "Both"].index(
-                giver_break_type_default.get(giver, "Both")
-            )
+            index=["15 min only", "30 min only", "Both"].index(giver_break_type_default.get(giver, "Both"))
         )
 
 # --- Shift input per giver ---
@@ -110,21 +104,25 @@ generate = st.button("Generate Schedule")
 
 if generate:
     st.session_state['tables'] = {}
-    A_queue = shift_employees["A"].copy()
-    B_queue_all = shift_employees["B"].copy()
 
+    # --- Distribute employees to breakers evenly (no overlap) ---
+    A_splits = {}
+    B_splits = {}
+    num_givers = len(givers)
+    for i, giver in enumerate(givers):
+        A_splits[giver] = shift_employees["A"][i::num_givers]
+        B_splits[giver] = shift_employees["B"][i::num_givers]
+
+    # --- Generate schedule per breaker ---
     for giver in givers:
         max_breaks = giver_max_breaks[giver]
         break_type = giver_break_type[giver]
-
-        # Assign employees
-        assigned_A = A_queue.copy()
-        assigned_B = B_queue_all.copy()
+        assigned_A = A_splits[giver].copy()
+        assigned_B = B_splits[giver].copy()
         schedule = []
         current_time = datetime.combine(schedule_date, giver_shift_times[giver][0])
         breaks_assigned = 0
 
-        # Helper function for round-robin
         def get_next_employee(queue):
             if not queue:
                 return None
@@ -133,7 +131,7 @@ if generate:
             return emp
 
         while breaks_assigned < max_breaks:
-            # A-shift 15 min
+            # 15-min A-shift
             if break_type in ["15 min only", "Both"] and assigned_A:
                 emp = get_next_employee(assigned_A)
                 start = current_time
@@ -141,8 +139,7 @@ if generate:
                 schedule.append([emp, "15 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
                 current_time = end + stagger_gap
                 breaks_assigned += 1
-                if breaks_assigned >= max_breaks:
-                    break
+                if breaks_assigned >= max_breaks: break
 
             # Giver self-break (30 min)
             if break_type in ["30 min only", "Both"] and breaks_assigned == 3 and max_breaks >= 4:
@@ -151,10 +148,9 @@ if generate:
                 schedule.append([giver, "30 min (Giver)", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
                 current_time = end + stagger_gap
                 breaks_assigned += 1
-                if breaks_assigned >= max_breaks:
-                    break
+                if breaks_assigned >= max_breaks: break
 
-            # A-shift 30 min
+            # 30-min A-shift
             if break_type in ["30 min only", "Both"] and assigned_A:
                 emp = get_next_employee(assigned_A)
                 start = current_time
@@ -162,8 +158,7 @@ if generate:
                 schedule.append([emp, "30 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
                 current_time = end + stagger_gap
                 breaks_assigned += 1
-                if breaks_assigned >= max_breaks:
-                    break
+                if breaks_assigned >= max_breaks: break
 
             # B-shift
             if assigned_B:
@@ -178,8 +173,7 @@ if generate:
                     schedule.append([emp, "15 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
                     current_time = end + stagger_gap
                     breaks_assigned += 1
-                    if breaks_assigned >= max_breaks:
-                        break
+                    if breaks_assigned >= max_breaks: break
 
                 if break_type in ["30 min only", "Both"]:
                     emp = get_next_employee(assigned_B)
@@ -188,8 +182,7 @@ if generate:
                     schedule.append([emp, "30 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
                     current_time = end + stagger_gap
                     breaks_assigned += 1
-                    if breaks_assigned >= max_breaks:
-                        break
+                    if breaks_assigned >= max_breaks: break
 
         # Total time
         if schedule:
@@ -204,10 +197,7 @@ if generate:
     # --- Editable Tables ---
     st.subheader("📅 Editable Schedule Per Break Giver")
     for giver, df in st.session_state['tables'].items():
-        start_time, end_time = giver_shift_times.get(
-            giver, 
-            (datetime.strptime("09:00","%H:%M").time(), datetime.strptime("17:00","%H:%M").time())
-        )
+        start_time, end_time = giver_shift_times[giver]
         st.markdown(f"**Breaker: {giver} | Date: {schedule_date} | Start: {start_time} | End: {end_time}**")
         edited_df = st.data_editor(df, num_rows="dynamic", use_container_width=True, key=f"editor_{giver}")
         st.session_state['tables'][giver] = edited_df
@@ -235,19 +225,16 @@ if generate:
 st.subheader("📝 Break Count Per Employee")
 if 'tables' in st.session_state:
     all_rows = pd.concat(st.session_state['tables'].values(), ignore_index=True)
-    
     counter_list = []
     for emp in shift_employees["A"] + shift_employees["B"]:
-        count_A = len(all_rows[(all_rows["Employee"] == emp) & (all_rows["Employee"].isin(shift_employees["A"]))])
-        count_B = len(all_rows[(all_rows["Employee"] == emp) & (all_rows["Employee"].isin(shift_employees["B"]))])
+        count_A = len(all_rows[(all_rows["Employee"]==emp) & (all_rows["Break Type"].str.contains("15|30")) & (all_rows["Start"]<str(B_shift_start_time))])
+        count_B = len(all_rows[(all_rows["Employee"]==emp) & (all_rows["Break Type"].str.contains("15|30")) & (all_rows["Start"]>=str(B_shift_start_time))])
         counter_list.append([emp, count_A, count_B])
-    
     counter_df = pd.DataFrame(counter_list, columns=["Employee", "Shift A Breaks", "Shift B Breaks"])
     st.dataframe(counter_df)
 
 # --- Excel Export (Single Sheet) ---
 st.subheader("⬇️ Download Schedule (Single Sheet)")
-
 buffer = BytesIO()
 wb = Workbook()
 ws = wb.active
@@ -255,11 +242,7 @@ ws.title = "Schedule"
 
 if 'tables' in st.session_state:
     for giver, df in st.session_state['tables'].items():
-        start_time, end_time = giver_shift_times.get(
-            giver, 
-            (datetime.strptime("09:00","%H:%M").time(), datetime.strptime("17:00","%H:%M").time())
-        )
-        # Table title
+        start_time, end_time = giver_shift_times[giver]
         ws.append([f"Breaker: {giver} | Date: {schedule_date} | Start: {start_time} | End: {end_time}"])
         title_row = ws.max_row
         ws.merge_cells(start_row=title_row, start_column=1, end_row=title_row, end_column=df.shape[1])
@@ -268,7 +251,6 @@ if 'tables' in st.session_state:
         cell.fill = PatternFill("solid", fgColor="4F81BD")
         cell.alignment = Alignment(horizontal="center")
 
-        # Header
         ws.append(df.columns.tolist())
         header_row = ws.max_row
         for col_num, _ in enumerate(df.columns, 1):
@@ -279,13 +261,10 @@ if 'tables' in st.session_state:
             thin = Side(border_style="thin", color="000000")
             c.border = Border(top=thin, left=thin, right=thin, bottom=thin)
 
-        # Data
         for r in dataframe_to_rows(df, index=False, header=False):
             ws.append(r)
+        ws.append([])
 
-        ws.append([])  # Empty row between tables
-
-# Adjust column widths
 for col_cells in ws.columns:
     max_length = 0
     col_letter = None
