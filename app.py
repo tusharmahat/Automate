@@ -8,7 +8,6 @@ import os
 DATA_FILE = "schedule_data.json"
 break15 = timedelta(minutes=15)
 break30 = timedelta(minutes=30)
-global_finish_time = datetime.strptime("16:15", "%H:%M")
 
 # --- Load previous data ---
 if os.path.exists(DATA_FILE):
@@ -18,7 +17,7 @@ else:
     saved_data = {}
 
 # --- Inputs ---
-st.title("☕ Break Scheduler with Checker (Finish by 16:15)")
+st.title("☕ Break Scheduler with Checker")
 
 # Breakers
 st.subheader("👨‍💼 Break Giver(s)")
@@ -88,7 +87,7 @@ if st.button("Generate Schedule"):
         if b["type"] in ["30 min only", "Both"]:
             allowed_types.append("30")
         
-        current_time = max(start_time, datetime.strptime("10:00", "%H:%M"))
+        current_time = start_time
         i = 0
         while i < len(break_pool):
             brk = break_pool[i]
@@ -100,7 +99,7 @@ if st.button("Generate Schedule"):
             
             duration = break15 if b_type == "15" else break30
             
-            if current_time + duration > min(end_time, global_finish_time):
+            if current_time + duration > end_time:
                 i += 1
                 continue
             
@@ -128,5 +127,5 @@ if st.button("Generate Schedule"):
     
     # --- Show unassigned breaks if any ---
     if break_pool:
-        st.warning("⚠️ Some breaks could not be scheduled before finish time!")
+        st.warning("⚠️ Some breaks could not be scheduled within breaker shifts!")
         st.dataframe(pd.DataFrame(break_pool))
