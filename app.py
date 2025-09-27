@@ -20,7 +20,7 @@ st.title("☕ Break Scheduler with Checker")
 break15 = timedelta(minutes=15)
 break30 = timedelta(minutes=30)
 
-# --- Load existing data ---
+# --- Load saved data ---
 if os.path.exists(DATA_FILE):
     with open(DATA_FILE, "r") as f:
         saved_data = json.load(f)
@@ -103,48 +103,48 @@ generate = st.button("Generate Schedule")
 if generate:
     st.session_state['tables'] = {}
 
-    # --- Create break pools ---
-    A_15 = [(emp, "15 min") for emp in shift_employees["A"]]
-    A_30 = [(emp, "30 min") for emp in shift_employees["A"]]
-    B_15 = [(emp, "15 min") for emp in shift_employees["B"]]
-    B_30 = [(emp, "30 min") for emp in shift_employees["B"]]
+    # --- Prepare break queues ---
+    A_15_queue = [(emp, "15 min") for emp in shift_employees["A"]]
+    A_30_queue = [(emp, "30 min") for emp in shift_employees["A"]]
+    B_15_queue = [(emp, "15 min") for emp in shift_employees["B"]]
+    B_30_queue = [(emp, "30 min") for emp in shift_employees["B"]]
 
-    for giver in givers:
-        max_breaks = giver_max_breaks[giver]
-        break_type = giver_break_type[giver]
-        start_time, end_time = giver_shift_times[giver]
+    def assign_breaks(giver, max_breaks, break_type, start_time, end_time):
         current_time = datetime.combine(schedule_date, start_time)
         shift_end_time = datetime.combine(schedule_date, end_time)
-
         schedule = []
         breaks_assigned = 0
 
-        # --- Select pools based on break type ---
+        # Select queues based on break_type
         pools = []
         if break_type in ["15 min only", "Both"]:
-            pools.extend([A_15, B_15])
+            pools.extend([A_15_queue, B_15_queue])
         if break_type in ["30 min only", "Both"]:
-            pools.extend([A_30, B_30])
+            pools.extend([A_30_queue, B_30_queue])
 
-        # --- Assign breaks until max_breaks or pools empty ---
+        # Loop until max_breaks reached or no breaks in queues
         while breaks_assigned < max_breaks and any(pools):
             for pool in pools:
                 if not pool:
                     continue
                 emp, b_type = pool.pop(0)
-                duration = break15 if b_type=="15 min" else break30
-
-                # Skip if break exceeds shift end
+                duration = break15 if b_type == "15 min" else break30
                 if current_time + duration > shift_end_time:
                     continue
-
                 schedule.append([emp, b_type, current_time.strftime("%H:%M"), (current_time + duration).strftime("%H:%M"), ""])
                 current_time += duration
                 breaks_assigned += 1
                 if breaks_assigned >= max_breaks:
                     break
+        return pd.DataFrame(schedule, columns=["Employee", "Break Type", "Start", "End", "SA Initial"])
 
-        st.session_state['tables'][giver] = pd.DataFrame(schedule, columns=["Employee", "Break Type", "Start", "End", "SA Initial"])
+    # --- Assign breaks to all breakers ---
+    for giver in givers:
+        max_breaks = giver_max_breaks[giver]
+        break_type = giver_break_type[giver]
+        start_time, end_time = giver_shift_times[giver]
+        df = assign_breaks(giver, max_breaks, break_type, start_time, end_time)
+        st.session_state['tables'][giver] = df
 
     # --- Display Editable Tables ---
     st.subheader("📅 Editable Schedule Per Break Giver")
@@ -177,10 +177,7 @@ if generate:
 st.subheader("📝 Break Count Per Employee")
 if 'tables' in st.session_state:
     all_rows = pd.concat(st.session_state['tables'].values(), ignore_index=True)
-    counter_list = []
-    for emp in shift_employees["A"] + shift_employees["B"]:
-        count = len(all_rows[all_rows["Employee"] == emp])
-        counter_list.append([emp, count])
+    counter_list = [[emp, len(all_rows[all_rows["Employee"]==emp])] for emp in shift_employees["A"] + shift_employees["B"]]
     counter_df = pd.DataFrame(counter_list, columns=["Employee", "Total Breaks"])
     st.dataframe(counter_df)
 
@@ -193,8 +190,8 @@ ws.title = "Schedule"
 
 if 'tables' in st.session_state:
     for giver, df in st.session_state['tables'].items():
-        start_time, end_time = giver_shift_times[giver]
-        ws.append([f"Breaker: {giver} | Date: {schedule_date} | Start: {start_time} | End: {end_time}"])
+        # Table title
+        ws.append([f"Breaker: {giver} | Date: {schedule_date} | Start: {giver_shift_times[giver][0]} | End: {giver_shift_times[giver][1]}"])
         title_row = ws.max_row
         ws.merge_cells(start_row=title_row, start_column=1, end_row=title_row, end_column=df.shape[1])
         cell = ws.cell(row=title_row, column=1)
@@ -202,6 +199,7 @@ if 'tables' in st.session_state:
         cell.fill = PatternFill("solid", fgColor="4F81BD")
         cell.alignment = Alignment(horizontal="center")
 
+        # Header
         ws.append(df.columns.tolist())
         header_row = ws.max_row
         for col_num, _ in enumerate(df.columns, 1):
@@ -216,6 +214,7 @@ if 'tables' in st.session_state:
             ws.append(r)
         ws.append([])
 
+# Adjust column widths
 for col_cells in ws.columns:
     max_length = 0
     col_letter = None
