@@ -19,7 +19,6 @@ st.title("☕ Break Scheduler with Checker")
 # --- Settings ---
 break15 = timedelta(minutes=15)
 break30 = timedelta(minutes=30)
-stagger_gap = timedelta(minutes=0)
 
 # --- Load existing data ---
 if os.path.exists(DATA_FILE):
@@ -104,97 +103,53 @@ generate = st.button("Generate Schedule")
 
 if generate:
     st.session_state['tables'] = {}
+    
+    A_queue = shift_employees["A"].copy()
+    B_queue = shift_employees["B"].copy()
 
-    # --- Distribute employees to breakers evenly (no overlap) ---
-    A_splits = {}
-    B_splits = {}
-    num_givers = len(givers)
-    for i, giver in enumerate(givers):
-        A_splits[giver] = shift_employees["A"][i::num_givers]
-        B_splits[giver] = shift_employees["B"][i::num_givers]
-
-    # --- Generate schedule per breaker ---
     for giver in givers:
         max_breaks = giver_max_breaks[giver]
         break_type = giver_break_type[giver]
-        assigned_A = A_splits[giver].copy()
-        assigned_B = B_splits[giver].copy()
         schedule = []
         current_time = datetime.combine(schedule_date, giver_shift_times[giver][0])
         breaks_assigned = 0
 
-        def get_next_employee(queue):
-            if not queue:
-                return None
-            emp = queue.pop(0)
-            queue.append(emp)
-            return emp
-
-        while breaks_assigned < max_breaks:
-            # 15-min A-shift
-            if break_type in ["15 min only", "Both"] and assigned_A:
-                emp = get_next_employee(assigned_A)
-                start = current_time
-                end = start + break15
-                schedule.append([emp, "15 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
-                current_time = end + stagger_gap
+        # Assign A-shift employees first
+        while breaks_assigned < max_breaks and A_queue:
+            emp = A_queue.pop(0)
+            if break_type in ["15 min only", "Both"]:
+                end_time = current_time + break15
+                schedule.append([emp, "15 min", current_time.strftime("%H:%M"), end_time.strftime("%H:%M"), ""])
+                current_time = end_time
                 breaks_assigned += 1
-                if breaks_assigned >= max_breaks: break
-
-            # Giver self-break (30 min)
-            if break_type in ["30 min only", "Both"] and breaks_assigned == 3 and max_breaks >= 4:
-                start = current_time
-                end = start + break30
-                schedule.append([giver, "30 min (Giver)", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
-                current_time = end + stagger_gap
+            elif break_type in ["30 min only", "Both"]:
+                end_time = current_time + break30
+                schedule.append([emp, "30 min", current_time.strftime("%H:%M"), end_time.strftime("%H:%M"), ""])
+                current_time = end_time
                 breaks_assigned += 1
-                if breaks_assigned >= max_breaks: break
 
-            # 30-min A-shift
-            if break_type in ["30 min only", "Both"] and assigned_A:
-                emp = get_next_employee(assigned_A)
-                start = current_time
-                end = start + break30
-                schedule.append([emp, "30 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
-                current_time = end + stagger_gap
-                breaks_assigned += 1
-                if breaks_assigned >= max_breaks: break
-
-            # B-shift
-            if assigned_B:
-                B_shift_min_start = datetime.combine(schedule_date, B_shift_start_time) + timedelta(hours=1)
-                if current_time < B_shift_min_start:
-                    current_time = B_shift_min_start
-
+        # Assign B-shift employees next
+        if B_queue:
+            B_shift_min_start = datetime.combine(schedule_date, B_shift_start_time) + timedelta(hours=1)
+            if current_time < B_shift_min_start:
+                current_time = B_shift_min_start
+            while breaks_assigned < max_breaks and B_queue:
+                emp = B_queue.pop(0)
                 if break_type in ["15 min only", "Both"]:
-                    emp = get_next_employee(assigned_B)
-                    start = current_time
-                    end = start + break15
-                    schedule.append([emp, "15 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
-                    current_time = end + stagger_gap
+                    end_time = current_time + break15
+                    schedule.append([emp, "15 min", current_time.strftime("%H:%M"), end_time.strftime("%H:%M"), ""])
+                    current_time = end_time
                     breaks_assigned += 1
-                    if breaks_assigned >= max_breaks: break
-
-                if break_type in ["30 min only", "Both"]:
-                    emp = get_next_employee(assigned_B)
-                    start = current_time
-                    end = start + break30
-                    schedule.append([emp, "30 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
-                    current_time = end + stagger_gap
+                elif break_type in ["30 min only", "Both"]:
+                    end_time = current_time + break30
+                    schedule.append([emp, "30 min", current_time.strftime("%H:%M"), end_time.strftime("%H:%M"), ""])
+                    current_time = end_time
                     breaks_assigned += 1
-                    if breaks_assigned >= max_breaks: break
-
-        # Total time
-        if schedule:
-            first_start = datetime.strptime(schedule[0][2], "%H:%M")
-            last_end = datetime.strptime(schedule[-1][3], "%H:%M")
-            total_time = last_end - first_start
-            schedule.append(["", "Total Time", first_start.strftime("%H:%M"), last_end.strftime("%H:%M"), str(total_time)])
 
         df = pd.DataFrame(schedule, columns=["Employee", "Break Type", "Start", "End", "SA Initial"])
         st.session_state['tables'][giver] = df
 
-    # --- Editable Tables ---
+    # --- Display tables ---
     st.subheader("📅 Editable Schedule Per Break Giver")
     for giver, df in st.session_state['tables'].items():
         start_time, end_time = giver_shift_times[giver]
@@ -202,7 +157,7 @@ if generate:
         edited_df = st.data_editor(df, num_rows="dynamic", use_container_width=True, key=f"editor_{giver}")
         st.session_state['tables'][giver] = edited_df
 
-    # --- Save all data to JSON ---
+    # --- Save JSON ---
     to_save = {
         "tables": {giver: df.to_dict(orient="records") for giver, df in st.session_state['tables'].items()},
         "form_data": {
@@ -219,7 +174,7 @@ if generate:
     with open(DATA_FILE, "w") as f:
         json.dump(to_save, f, indent=2)
 
-    st.success("✅ Schedule generated, displayed, and saved successfully!")
+    st.success("✅ Schedule generated and saved!")
 
 # --- Break Counter ---
 st.subheader("📝 Break Count Per Employee")
@@ -227,13 +182,12 @@ if 'tables' in st.session_state:
     all_rows = pd.concat(st.session_state['tables'].values(), ignore_index=True)
     counter_list = []
     for emp in shift_employees["A"] + shift_employees["B"]:
-        count_A = len(all_rows[(all_rows["Employee"]==emp) & (all_rows["Break Type"].str.contains("15|30")) & (all_rows["Start"]<str(B_shift_start_time))])
-        count_B = len(all_rows[(all_rows["Employee"]==emp) & (all_rows["Break Type"].str.contains("15|30")) & (all_rows["Start"]>=str(B_shift_start_time))])
-        counter_list.append([emp, count_A, count_B])
-    counter_df = pd.DataFrame(counter_list, columns=["Employee", "Shift A Breaks", "Shift B Breaks"])
+        count = len(all_rows[all_rows["Employee"] == emp])
+        counter_list.append([emp, count])
+    counter_df = pd.DataFrame(counter_list, columns=["Employee", "Total Breaks"])
     st.dataframe(counter_df)
 
-# --- Excel Export (Single Sheet) ---
+# --- Excel Export ---
 st.subheader("⬇️ Download Schedule (Single Sheet)")
 buffer = BytesIO()
 wb = Workbook()
