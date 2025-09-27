@@ -180,7 +180,18 @@ if generate:
         df = pd.DataFrame(schedule, columns=["Employee", "Break Type", "Start", "End", "SA Initial"])
         st.session_state['tables'][giver] = df
 
-    # --- Save to JSON ---
+    # --- Editable Tables ---
+    st.subheader("📅 Editable Schedule Per Break Giver")
+    for giver, df in st.session_state['tables'].items():
+        start_time, end_time = giver_shift_times.get(
+            giver, 
+            (datetime.strptime("09:00","%H:%M").time(), datetime.strptime("17:00","%H:%M").time())
+        )
+        st.markdown(f"**Breaker: {giver} | Date: {schedule_date} | Start: {start_time} | End: {end_time}**")
+        edited_df = st.data_editor(df, num_rows="dynamic", use_container_width=True, key=f"editor_{giver}")
+        st.session_state['tables'][giver] = edited_df
+
+    # --- Save all data to JSON ---
     to_save = {
         "tables": {giver: df.to_dict(orient="records") for giver, df in st.session_state['tables'].items()},
         "form_data": {
@@ -197,4 +208,78 @@ if generate:
     with open(DATA_FILE, "w") as f:
         json.dump(to_save, f, indent=2)
 
-    st.success("✅ Schedule generated and saved successfully!")
+    st.success("✅ Schedule generated, displayed, and saved successfully!")
+
+# --- Break Counter ---
+st.subheader("📝 Break Count Per Employee")
+if 'tables' in st.session_state:
+    all_rows = pd.concat(st.session_state['tables'].values(), ignore_index=True)
+    
+    counter_list = []
+    for emp in shift_employees["A"] + shift_employees["B"]:
+        count_A = len(all_rows[(all_rows["Employee"] == emp) & (all_rows["Employee"].isin(shift_employees["A"]))])
+        count_B = len(all_rows[(all_rows["Employee"] == emp) & (all_rows["Employee"].isin(shift_employees["B"]))])
+        counter_list.append([emp, count_A, count_B])
+    
+    counter_df = pd.DataFrame(counter_list, columns=["Employee", "Shift A Breaks", "Shift B Breaks"])
+    st.dataframe(counter_df)
+
+# --- Excel Export ---
+st.subheader("⬇️ Download Schedule")
+buffer = BytesIO()
+wb = Workbook()
+
+if 'tables' in st.session_state:
+    for giver, df in st.session_state['tables'].items():
+        ws = wb.create_sheet(title=f"{giver}_Schedule")
+        start_time, end_time = giver_shift_times.get(
+            giver, 
+            (datetime.strptime("09:00","%H:%M").time(), datetime.strptime("17:00","%H:%M").time())
+        )
+        ws.append([f"Breaker: {giver} | Date: {schedule_date} | Start: {start_time} | End: {end_time}"])
+        title_row = ws.max_row
+        ws.merge_cells(start_row=title_row, start_column=1, end_row=title_row, end_column=df.shape[1])
+        cell = ws.cell(row=title_row, column=1)
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor="4F81BD")
+        cell.alignment = Alignment(horizontal="center")
+
+        ws.append(df.columns.tolist())
+        header_row = ws.max_row
+        for col_num, _ in enumerate(df.columns, 1):
+            c = ws.cell(row=header_row, column=col_num)
+            c.font = Font(bold=True)
+            c.fill = PatternFill("solid", fgColor="D9E1F2")
+            c.alignment = Alignment(horizontal="center")
+            thin = Side(border_style="thin", color="000000")
+            c.border = Border(top=thin, left=thin, right=thin, bottom=thin)
+
+        for r in dataframe_to_rows(df, index=False, header=False):
+            ws.append(r)
+        ws.append([])
+
+if "Sheet" in wb.sheetnames and wb["Sheet"].max_row == 1:
+    wb.remove(wb["Sheet"])
+
+for ws in wb.worksheets:
+    for col_cells in ws.columns:
+        max_length = 0
+        col_letter = None
+        for cell in col_cells:
+            if not isinstance(cell, MergedCell):
+                col_letter = cell.column_letter
+                break
+        if not col_letter:
+            continue
+        for cell in col_cells:
+            if cell.value and not isinstance(cell, MergedCell):
+                max_length = max(max_length, len(str(cell.value)))
+        ws.column_dimensions[col_letter].width = max_length + 2
+
+wb.save(buffer)
+st.download_button(
+    label="Download Excel",
+    data=buffer,
+    file_name="break_schedule.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+)
