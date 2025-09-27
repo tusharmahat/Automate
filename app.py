@@ -7,6 +7,11 @@ from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils.dataframe import dataframe_to_rows
 from openpyxl.cell.cell import MergedCell
 import math
+import os
+import json
+
+# --- JSON data file ---
+DATA_FILE = "break_schedule_data.json"
 
 # --- Page setup ---
 st.set_page_config(page_title="Break Scheduler", layout="wide")
@@ -56,12 +61,19 @@ B_shift_start_time = st.time_input("B Shift Start Time (breaks start 1 hour afte
 # --- Schedule date ---
 schedule_date = st.date_input("📅 Select Schedule Date", datetime.today())
 
+# --- Load existing data from JSON ---
+if os.path.exists(DATA_FILE):
+    with open(DATA_FILE, "r") as f:
+        saved_data = json.load(f)
+        st.session_state['tables'] = {giver: pd.DataFrame(df) for giver, df in saved_data.items()}
+else:
+    st.session_state['tables'] = {}
+
 # --- Generate Schedule ---
 generate = st.button("Generate Schedule")
 
 if generate:
     st.session_state['tables'] = {}
-
     A_queue = shift_employees["A"].copy()
     B_queue_all = shift_employees["B"].copy()
 
@@ -133,7 +145,12 @@ if generate:
         df = pd.DataFrame(schedule, columns=["Employee", "Break Type", "Start", "End", "SA Initial"])
         st.session_state['tables'][giver] = df
 
-    st.success("✅ Schedule generated successfully!")
+    # --- Save to JSON ---
+    to_save = {giver: df.to_dict(orient="records") for giver, df in st.session_state['tables'].items()}
+    with open(DATA_FILE, "w") as f:
+        json.dump(to_save, f, indent=2)
+
+    st.success("✅ Schedule generated and saved successfully!")
 
 # --- Display Editable Tables ---
 st.subheader("📅 Editable Schedule Per Break Giver")
@@ -142,6 +159,11 @@ if 'tables' in st.session_state:
         st.markdown(f"**Breaker: {giver} | Date: {schedule_date} | Start: {giver_shift_times[giver][0]} | End: {giver_shift_times[giver][1]}**")
         edited_df = st.data_editor(df, num_rows="dynamic", use_container_width=True, key=f"editor_{giver}")
         st.session_state['tables'][giver] = edited_df
+
+    # Save edited tables to JSON
+    to_save = {giver: df.to_dict(orient="records") for giver, df in st.session_state['tables'].items()}
+    with open(DATA_FILE, "w") as f:
+        json.dump(to_save, f, indent=2)
 
 # --- Excel Export ---
 st.subheader("⬇️ Download Schedule")
