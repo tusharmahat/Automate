@@ -61,82 +61,75 @@ generate = st.button("Generate Schedule")
 
 if generate:
     st.session_state['tables'] = {}
+
     A_queue = shift_employees["A"].copy()
-    B_queue = shift_employees["B"].copy()
+    B_queue_all = shift_employees["B"].copy()
 
     for giver in givers:
         max_breaks = giver_max_breaks[giver]
-        # Distribute B-shift employees fairly across all breakers
-        # At the start, make a copy of B queue
-        B_queue_all = shift_employees["B"].copy()
-        
-        for giver in givers:
-            max_breaks = giver_max_breaks[giver]
-            
-            # Assign employees for A-shift
-            num_A = min(math.ceil(max_breaks / 2), len(A_queue))
-            assigned_A = A_queue[:num_A]
-            A_queue = A_queue[num_A:]
-            
-            # Assign employees for B-shift
-            # Take next available from full B queue
-            num_B = min(max_breaks - num_A, len(B_queue_all))
-            assigned_B = B_queue_all[:num_B]
-            B_queue_all = B_queue_all[num_B:]
 
+        # Assign employees
+        num_A = min(math.ceil(max_breaks / 2), len(A_queue))
+        assigned_A = A_queue[:num_A]
+        A_queue = A_queue[num_A:]
 
+        num_B = min(max_breaks - num_A, len(B_queue_all))
+        assigned_B = B_queue_all[:num_B]
+        B_queue_all = B_queue_all[num_B:]
 
+        # Build schedule
         schedule = []
         current_time = datetime.combine(schedule_date, giver_shift_times[giver][0])
 
-        # --- A-Shift 15-min breaks ---
+        # A-Shift 15-min breaks
         for emp in assigned_A:
             start = current_time
             end = start + break15
             schedule.append([emp, "15 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
             current_time = end + stagger_gap
 
-        # --- Break giver self-break only if max_breaks >= 4 ---
+        # Giver self-break if applicable
         if max_breaks >= 4 and assigned_A:
-            giver_break_start = current_time
-            giver_break_end = giver_break_start + break30
-            schedule.append([giver, "30 min (Giver)", giver_break_start.strftime("%H:%M"), giver_break_end.strftime("%H:%M"), ""])
-            current_time = giver_break_end + stagger_gap
+            giver_start = current_time
+            giver_end = giver_start + break30
+            schedule.append([giver, "30 min (Giver)", giver_start.strftime("%H:%M"), giver_end.strftime("%H:%M"), ""])
+            current_time = giver_end + stagger_gap
 
-        # --- A-Shift 30-min breaks ---
+        # A-Shift 30-min breaks
         for emp in assigned_A:
             start = current_time
             end = start + break30
             schedule.append([emp, "30 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
             current_time = end + stagger_gap
 
-        # --- Wait until B-shift +1 hour if necessary ---
+        # Wait until B-shift +1 hour
         if assigned_B:
             B_shift_min_start = datetime.combine(schedule_date, B_shift_start_time) + timedelta(hours=1)
             if current_time < B_shift_min_start:
                 current_time = B_shift_min_start
 
-        # --- B-Shift 15-min breaks ---
+        # B-Shift 15-min breaks
         for emp in assigned_B:
             start = current_time
             end = start + break15
             schedule.append([emp, "15 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
             current_time = end + stagger_gap
 
-        # --- B-Shift 30-min breaks ---
+        # B-Shift 30-min breaks
         for emp in assigned_B:
             start = current_time
             end = start + break30
             schedule.append([emp, "30 min", start.strftime("%H:%M"), end.strftime("%H:%M"), ""])
             current_time = end + stagger_gap
 
-        # --- Total time ---
+        # Total time summary
         if schedule:
             first_start = datetime.strptime(schedule[0][2], "%H:%M")
             last_end = datetime.strptime(schedule[-1][3], "%H:%M")
             total_time = last_end - first_start
             schedule.append(["", "Total Time", first_start.strftime("%H:%M"), last_end.strftime("%H:%M"), str(total_time)])
 
+        # Store table
         df = pd.DataFrame(schedule, columns=["Employee", "Break Type", "Start", "End", "SA Initial"])
         st.session_state['tables'][giver] = df
 
@@ -154,12 +147,12 @@ if 'tables' in st.session_state:
 st.subheader("⬇️ Download Schedule")
 buffer = BytesIO()
 wb = Workbook()
-ws = wb.active
-ws.title = "Schedule"
 
 if 'tables' in st.session_state:
     for giver, df in st.session_state['tables'].items():
-        # Table title
+        ws = wb.create_sheet(title=f"{giver}_Schedule")
+
+        # Title
         ws.append([f"Breaker: {giver} | Date: {schedule_date} | Start: {giver_shift_times[giver][0]} | End: {giver_shift_times[giver][1]}"])
         title_row = ws.max_row
         ws.merge_cells(start_row=title_row, start_column=1, end_row=title_row, end_column=df.shape[1])
@@ -184,6 +177,10 @@ if 'tables' in st.session_state:
             ws.append(r)
         ws.append([])
 
+# Remove default sheet
+if "Sheet" in wb.sheetnames and wb["Sheet"].max_row == 1:
+    wb.remove(wb["Sheet"])
+
 # Adjust column widths
 for ws in wb.worksheets:
     for col_cells in ws.columns:
@@ -201,5 +198,9 @@ for ws in wb.worksheets:
         ws.column_dimensions[col_letter].width = max_length + 2
 
 wb.save(buffer)
-st.download_button("Download Excel", buffer, "break_schedule.xlsx",
-                   mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+st.download_button(
+    label="Download Excel",
+    data=buffer,
+    file_name="break_schedule.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+)
