@@ -24,7 +24,6 @@ break30 = timedelta(minutes=30)
 if os.path.exists(DATA_FILE):
     with open(DATA_FILE, "r") as f:
         saved_data = json.load(f)
-    
     st.session_state['tables'] = {giver: pd.DataFrame(df) for giver, df in saved_data.get("tables", {}).items()}
     form_data = saved_data.get("form_data", {})
     givers_input_default = form_data.get("givers_input", "1,2,3,4")
@@ -103,53 +102,51 @@ generate = st.button("Generate Schedule")
 
 if generate:
     st.session_state['tables'] = {}
-    
-    A_queue = shift_employees["A"].copy()
-    B_queue = shift_employees["B"].copy()
+
+    # --- Create break pools ---
+    A_15 = [(emp, "15 min") for emp in shift_employees["A"]]
+    A_30 = [(emp, "30 min") for emp in shift_employees["A"]]
+    B_15 = [(emp, "15 min") for emp in shift_employees["B"]]
+    B_30 = [(emp, "30 min") for emp in shift_employees["B"]]
 
     for giver in givers:
         max_breaks = giver_max_breaks[giver]
         break_type = giver_break_type[giver]
+        start_time, end_time = giver_shift_times[giver]
+        current_time = datetime.combine(schedule_date, start_time)
+        shift_end_time = datetime.combine(schedule_date, end_time)
+
         schedule = []
-        current_time = datetime.combine(schedule_date, giver_shift_times[giver][0])
         breaks_assigned = 0
 
-        # Assign A-shift employees first
-        while breaks_assigned < max_breaks and A_queue:
-            emp = A_queue.pop(0)
-            if break_type in ["15 min only", "Both"]:
-                end_time = current_time + break15
-                schedule.append([emp, "15 min", current_time.strftime("%H:%M"), end_time.strftime("%H:%M"), ""])
-                current_time = end_time
+        # --- Select pools based on break type ---
+        pools = []
+        if break_type in ["15 min only", "Both"]:
+            pools.extend([A_15, B_15])
+        if break_type in ["30 min only", "Both"]:
+            pools.extend([A_30, B_30])
+
+        # --- Assign breaks until max_breaks or pools empty ---
+        while breaks_assigned < max_breaks and any(pools):
+            for pool in pools:
+                if not pool:
+                    continue
+                emp, b_type = pool.pop(0)
+                duration = break15 if b_type=="15 min" else break30
+
+                # Skip if break exceeds shift end
+                if current_time + duration > shift_end_time:
+                    continue
+
+                schedule.append([emp, b_type, current_time.strftime("%H:%M"), (current_time + duration).strftime("%H:%M"), ""])
+                current_time += duration
                 breaks_assigned += 1
-            elif break_type in ["30 min only", "Both"]:
-                end_time = current_time + break30
-                schedule.append([emp, "30 min", current_time.strftime("%H:%M"), end_time.strftime("%H:%M"), ""])
-                current_time = end_time
-                breaks_assigned += 1
+                if breaks_assigned >= max_breaks:
+                    break
 
-        # Assign B-shift employees next
-        if B_queue:
-            B_shift_min_start = datetime.combine(schedule_date, B_shift_start_time) + timedelta(hours=1)
-            if current_time < B_shift_min_start:
-                current_time = B_shift_min_start
-            while breaks_assigned < max_breaks and B_queue:
-                emp = B_queue.pop(0)
-                if break_type in ["15 min only", "Both"]:
-                    end_time = current_time + break15
-                    schedule.append([emp, "15 min", current_time.strftime("%H:%M"), end_time.strftime("%H:%M"), ""])
-                    current_time = end_time
-                    breaks_assigned += 1
-                elif break_type in ["30 min only", "Both"]:
-                    end_time = current_time + break30
-                    schedule.append([emp, "30 min", current_time.strftime("%H:%M"), end_time.strftime("%H:%M"), ""])
-                    current_time = end_time
-                    breaks_assigned += 1
+        st.session_state['tables'][giver] = pd.DataFrame(schedule, columns=["Employee", "Break Type", "Start", "End", "SA Initial"])
 
-        df = pd.DataFrame(schedule, columns=["Employee", "Break Type", "Start", "End", "SA Initial"])
-        st.session_state['tables'][giver] = df
-
-    # --- Display tables ---
+    # --- Display Editable Tables ---
     st.subheader("📅 Editable Schedule Per Break Giver")
     for giver, df in st.session_state['tables'].items():
         start_time, end_time = giver_shift_times[giver]
